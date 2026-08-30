@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mon Tableau Interactif</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>📚 Mon Mur de Documents</h1>
+        <nav>
+            <button id="btn-theme" class="active">Vue par Thèmes</button>
+            <button id="btn-timeline">Vue Chronologique</button>
+            <button id="btn-add" class="btn-primary">+ Nouveau Document</button>
+        </nav>
+    </header>
+
+    <main>
+        <section id="view-themes" class="view active"></section>
+
+        <section id="view-timeline" class="view hidden">
+            <div class="timeline-container" id="timeline-container"></div>
+        </section>
+    </main>
+
+    <div id="form-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-btn" id="close-form">&times;</span>
+            <h2 id="modal-title">Ajouter un document</h2>
+            <form id="doc-form">
+                <input type="hidden" id="doc-id">
+                <input type="text" id="doc-title" placeholder="Titre du document" required>
+                <input type="date" id="doc-date" required>
+                <input type="text" id="doc-theme" placeholder="Thème (ex: Histoire, Code...)" required>
+                <input type="text" id="doc-tags" placeholder="Tags (séparés par des virgules)">
+                <textarea id="doc-summary" placeholder="Résumé court..." required></textarea>
+                <textarea id="doc-content" placeholder="Contenu complet ou lien du document..." required></textarea>
+                <button type="submit" class="btn-primary">Enregistrer</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="read-modal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-btn" id="close-read">&times;</span>
+            <h2 id="read-title"></h2>
+            <div class="meta-info">
+                <span id="read-date"></span> | <span id="read-theme"></span>
+            </div>
+            <div id="read-tags" class="tags-container"></div>
+            <hr>
+            <p id="read-content"></p>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>

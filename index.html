@@ -3,57 +3,80 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mon Tableau Interactif</title>
+    <title>Mon Mur de Documents</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <header>
-        <h1>📚 Mon Mur de Documents</h1>
-        <nav>
-            <button id="btn-theme" class="active">Vue par Thèmes</button>
-            <button id="btn-timeline">Vue Chronologique</button>
-            <button id="btn-add" class="btn-primary">+ Nouveau Document</button>
+        <div>
+            <p class="eyebrow">ESPACE DE VEILLE</p>
+            <h1>📚 Mon Mur de Documents</h1>
+        </div>
+        <nav aria-label="Vues et actions">
+            <button id="btn-theme" class="active" type="button">Vue par thèmes</button>
+            <button id="btn-timeline" type="button">Frise chronologique</button>
+            <button id="btn-add" class="btn-primary" type="button">+ Ajouter</button>
         </nav>
     </header>
 
     <main>
-        <section id="view-themes" class="view active"></section>
-
-        <section id="view-timeline" class="view hidden">
-            <div class="timeline-container" id="timeline-container"></div>
+        <p id="app-status" class="app-status" role="status">Connexion à votre tableau…</p>
+        <section id="view-themes" class="view active" aria-label="Documents par thème"></section>
+        <section id="view-timeline" class="view hidden" aria-label="Frise chronologique">
+            <div class="timeline-help">Cliquez-glissez sur la frise pour parcourir le temps.</div>
+            <div id="timeline-scroll" class="timeline-scroll" aria-label="Frise défilable horizontalement">
+                <div id="timeline-container" class="timeline-container"></div>
+            </div>
         </section>
     </main>
 
-    <div id="form-modal" class="modal hidden">
-        <div class="modal-content">
-            <span class="close-btn" id="close-form">&times;</span>
-            <h2 id="modal-title">Ajouter un document</h2>
+    <div id="form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-content form-content">
+            <button class="close-btn" id="close-form" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="modal-title">Ajouter un élément</h2>
             <form id="doc-form">
                 <input type="hidden" id="doc-id">
-                <input type="text" id="doc-title" placeholder="Titre du document" required>
-                <input type="date" id="doc-date" required>
-                <input type="text" id="doc-theme" placeholder="Thème (ex: Histoire, Code...)" required>
-                <input type="text" id="doc-tags" placeholder="Tags (séparés par des virgules)">
-                <textarea id="doc-summary" placeholder="Résumé court..." required></textarea>
-                <textarea id="doc-content" placeholder="Contenu complet ou lien du document..." required></textarea>
-                <button type="submit" class="btn-primary">Enregistrer</button>
+                <input type="hidden" id="existing-file-url">
+                <input type="hidden" id="existing-file-path">
+                <input type="hidden" id="existing-file-name">
+                <input type="hidden" id="existing-file-type">
+                <fieldset class="type-choice">
+                    <legend>Type d'élément</legend>
+                    <label><input type="radio" name="item-type" value="document" checked> Document</label>
+                    <label><input type="radio" name="item-type" value="deadline"> Échéance</label>
+                </fieldset>
+                <label>Titre <input type="text" id="doc-title" placeholder="Ex. Compte-rendu de réunion" required></label>
+                <label>Date <input type="date" id="doc-date" required></label>
+                <div id="document-fields">
+                    <label>Thème <input type="text" id="doc-theme" placeholder="Ex. Histoire, Code…"></label>
+                    <label>Tags <input type="text" id="doc-tags" placeholder="Séparés par des virgules"></label>
+                    <label>Résumé <textarea id="doc-summary" placeholder="Résumé court…"></textarea></label>
+                    <label>Contenu ou lien <textarea id="doc-content" placeholder="Notes, contenu complet ou lien…"></textarea></label>
+                    <label>Fichier <input type="file" id="doc-file" aria-describedby="file-hint"></label>
+                    <small id="file-hint">Image, PDF ou tout autre fichier. Laissez vide pour conserver le fichier actuel.</small>
+                </div>
+                <div id="deadline-fields" class="hidden">
+                    <label>Couleur du jalon <input type="color" id="deadline-color" value="#f97316"></label>
+                    <label>Description rapide <input type="text" id="deadline-description" placeholder="Ex. Envoyer la version finale"></label>
+                </div>
+                <button id="submit-item" type="submit" class="btn-primary">Enregistrer</button>
             </form>
         </div>
     </div>
 
-    <div id="read-modal" class="modal hidden">
+    <div id="read-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="read-title">
         <div class="modal-content">
-            <span class="close-btn" id="close-read">&times;</span>
+            <button class="close-btn" id="close-read" type="button" aria-label="Fermer">&times;</button>
+            <p id="read-type" class="item-kind"></p>
             <h2 id="read-title"></h2>
-            <div class="meta-info">
-                <span id="read-date"></span> | <span id="read-theme"></span>
-            </div>
+            <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span></div>
             <div id="read-tags" class="tags-container"></div>
-            <hr>
+            <p id="read-summary" class="read-summary"></p>
             <p id="read-content"></p>
+            <div id="read-file" class="file-preview"></div>
         </div>
     </div>
 
-    <script src="script.js"></script>
+    <script type="module" src="script.js"></script>
 </body>
 </html>

@@ -1,11 +1,11 @@
-// Remplacez ces valeurs par la configuration de votre projet Firebase.
 const firebaseConfig = {
-    apiKey: "VOTRE_API_KEY",
-    authDomain: "VOTRE_PROJET.firebaseapp.com",
-    projectId: "VOTRE_PROJECT_ID",
-    storageBucket: "VOTRE_PROJET.firebasestorage.app",
-    messagingSenderId: "VOTRE_MESSAGING_SENDER_ID",
-    appId: "VOTRE_APP_ID"
+  apiKey: "AIzaSyAGFzbPtFgIyI9YmWAaNfiw4QFv8uiwBnw",
+  authDomain: "padlet-assembly.firebaseapp.com",
+  projectId: "padlet-assembly",
+  storageBucket: "padlet-assembly.firebasestorage.app",
+  messagingSenderId: "550691267356",
+  appId: "1:550691267356:web:b3a94b1d94014b82cd90d9",
+  measurementId: "G-BJJDP6M9Q4"
 };
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";

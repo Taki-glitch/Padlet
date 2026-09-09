@@ -10,12 +10,13 @@ const firebaseConfig = {
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-storage.js";
+import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
+import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase-config.js";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
-const storage = getStorage(app);
 const itemsCollection = collection(db, "padletItems");
+const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 let items = [];
 let isDragging = false;
 let dragStartX = 0;
@@ -43,6 +44,14 @@ function dateLabel(date) {
 }
 
 function formatTags(tags = "") { return tags.split(",").map((tag) => tag.trim()).filter(Boolean); }
+
+function createStorageFilePath(id, fileName) {
+    const safeName = (fileName.replace(/[^a-zA-Z0-9._-]/g, "_") || "document").slice(-150);
+    const randomId = typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : Array.from(crypto.getRandomValues(new Uint32Array(4)), (value) => value.toString(16)).join("-");
+    return `${id}/${Date.now()}-${randomId}-${safeName}`;
+}
 
 function render() { renderThemes(); renderTimeline(); }
 
@@ -142,14 +151,26 @@ function openForm(item = null) {
 async function uploadSelectedFile(id) {
     const file = $("doc-file").files[0];
     if (!file) return { fileUrl: $("existing-file-url").value, filePath: $("existing-file-path").value, fileName: $("existing-file-name").value, fileType: $("existing-file-type").value };
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const filePath = `padlet-files/${id}/${Date.now()}-${safeName}`;
-    const fileRef = ref(storage, filePath);
-    await uploadBytes(fileRef, file, { contentType: file.type || "application/octet-stream" });
-    const fileUrl = await getDownloadURL(fileRef);
-    const oldPath = $("existing-file-path").value;
-    if (oldPath && oldPath !== filePath) deleteObject(ref(storage, oldPath)).catch(() => {});
+    if (!supabase) throw new Error("La configuration Supabase est absente.");
+    const filePath = createStorageFilePath(id, file.name);
+    const { error } = await supabase.storage.from("documents").upload(filePath, file, {
+        contentType: file.type || "application/octet-stream",
+        upsert: false
+    });
+    if (error) throw error;
+    const { data } = supabase.storage.from("documents").getPublicUrl(filePath);
+    const fileUrl = data.publicUrl;
+    if (!fileUrl) {
+        await removeSupabaseFile(filePath);
+        throw new Error("Supabase n'a pas retourné d'URL publique.");
+    }
     return { fileUrl, filePath, fileName: file.name, fileType: file.type };
+}
+
+async function removeSupabaseFile(filePath) {
+    if (!supabase || !filePath || filePath.startsWith("padlet-files/")) return;
+    const { error } = await supabase.storage.from("documents").remove([filePath]);
+    if (error) console.warn("Le fichier Supabase n'a pas pu être supprimé.", error);
 }
 
 docForm.addEventListener("submit", async (event) => {
@@ -157,15 +178,22 @@ docForm.addEventListener("submit", async (event) => {
     const type = document.querySelector('input[name="item-type"]:checked').value;
     const id = $("doc-id").value || doc(itemsCollection).id;
     const submit = $("submit-item"); submit.disabled = true; submit.textContent = "Enregistrement…";
+    let uploadedFilePath = "";
     try {
         const file = type === "document" ? await uploadSelectedFile(id) : { fileUrl: "", filePath: "", fileName: "", fileType: "" };
-        if (type === "deadline" && $("existing-file-path").value) deleteObject(ref(storage, $("existing-file-path").value)).catch(() => {});
+        uploadedFilePath = $("doc-file").files[0] ? file.filePath : "";
+        const oldFilePath = $("existing-file-path").value;
         const item = type === "document"
             ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: $("doc-theme").value.trim(), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), ...file }
             : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim() };
         await setDoc(doc(db, "padletItems", id), item);
+        if (type === "deadline" || (file.filePath && file.filePath !== oldFilePath)) removeSupabaseFile(oldFilePath);
         formModal.classList.add("hidden"); setStatus("Élément enregistré en ligne.");
-    } catch (error) { console.error(error); setStatus("Impossible d'enregistrer. Vérifiez votre configuration Firebase et vos règles.", true); }
+    } catch (error) {
+        console.error(error);
+        await removeSupabaseFile(uploadedFilePath);
+        setStatus("Impossible d'enregistrer. Vérifiez votre configuration Firebase, Supabase et leurs règles.", true);
+    }
     finally { submit.disabled = false; submit.textContent = "Enregistrer"; }
 });
 
@@ -173,7 +201,7 @@ async function removeItem(item) {
     if (!window.confirm(`Supprimer « ${item.title} » ?`)) return;
     try {
         await deleteDoc(doc(db, "padletItems", item.id));
-        if (item.filePath) deleteObject(ref(storage, item.filePath)).catch(() => {});
+        await removeSupabaseFile(item.filePath);
         setStatus("Élément supprimé.");
     } catch (error) { console.error(error); setStatus("La suppression a échoué.", true); }
 }
@@ -205,4 +233,4 @@ timelineScroll.addEventListener("mousedown", (event) => { isDragging = false; dr
 timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.classList.contains("dragging")) return; event.preventDefault(); const distance = (event.pageX - timelineScroll.offsetLeft) - dragStartX; if (Math.abs(distance) > 4) isDragging = true; timelineScroll.scrollLeft = startScrollLeft - distance; });
 ["mouseup", "mouseleave"].forEach((name) => timelineScroll.addEventListener(name, () => { timelineScroll.classList.remove("dragging"); setTimeout(() => { isDragging = false; }, 0); }));
 
-onSnapshot(itemsCollection, (snapshot) => { items = snapshot.docs.map((item) => item.data()); render(); setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`); }, (error) => { console.error(error); setStatus("Connexion Firestore impossible. Ajoutez votre configuration Firebase et autorisez Firestore/Storage.", true); });
+onSnapshot(itemsCollection, (snapshot) => { items = snapshot.docs.map((item) => item.data()); render(); setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`); }, (error) => { console.error(error); setStatus("Connexion Firestore impossible. Vérifiez votre configuration Firebase et vos règles Firestore.", true); });

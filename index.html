@@ -20,6 +20,17 @@
     </header>
 
     <main>
+        <section class="board-tools" aria-label="Recherche et stockage">
+            <label class="search-control" for="document-search">
+                <span aria-hidden="true">🔎</span>
+                <input id="document-search" type="search" placeholder="Rechercher un document…" autocomplete="off">
+            </label>
+            <div id="storage-indicator" class="storage-indicator" role="status" aria-live="polite">
+                <div class="storage-heading"><span>💾 Stockage</span><strong id="storage-value">Chargement…</strong></div>
+                <div class="storage-track" aria-hidden="true"><span id="storage-progress"></span></div>
+                <small id="storage-remaining"></small>
+            </div>
+        </section>
         <p id="app-status" class="app-status" role="status">Connexion à votre tableau…</p>
         <section id="view-themes" class="view active" aria-label="Documents par thème"></section>
         <section id="view-timeline" class="view hidden" aria-label="Frise chronologique">
@@ -54,6 +65,16 @@
                     <label>Contenu ou lien <textarea id="doc-content" placeholder="Notes, contenu complet ou lien…"></textarea></label>
                     <label>Fichier <input type="file" id="doc-file" aria-describedby="file-hint"></label>
                     <small id="file-hint">Image, PDF ou tout autre fichier. Laissez vide pour conserver le fichier actuel.</small>
+                    <label>Durée de conservation
+                        <select id="doc-retention" aria-describedby="expiration-preview">
+                            <option value="">Aucune expiration</option>
+                            <option value="1">1 mois</option>
+                            <option value="3">3 mois</option>
+                            <option value="6">6 mois</option>
+                            <option value="12">1 an</option>
+                        </select>
+                    </label>
+                    <small id="expiration-preview">Ce document ne sera pas supprimé automatiquement.</small>
                 </div>
                 <div id="deadline-fields" class="hidden">
                     <label>Couleur du jalon <input type="color" id="deadline-color" value="#f97316"></label>

@@ -4,6 +4,45 @@ Application web statique de mur de documents. Firebase Firestore conserve les
 métadonnées dans la collection `padletItems`; Supabase Storage stocke les fichiers
 dans le bucket `documents`.
 
+## Recherche, stockage et expiration
+
+La recherche est réalisée dans le navigateur sur les éléments déjà synchronisés :
+elle ignore la casse et les accents et couvre titre, résumé, tags, thème, contenu et
+description. Elle filtre aussi la frise. Le compteur additionne les tailles réelles
+(`metadata.size`) des objets retournés par l'API Storage, y compris dans les dossiers.
+Il impose une limite de 50 Mio avant l'upload. La politique `select` du bucket est donc
+requise en plus des politiques déjà listées ci-dessous.
+
+Les documents créés ou modifiés avec une durée de conservation enregistrent dans
+Firestore `publishedAt` (ISO), `retentionMonths` et `expiresAt` (`YYYY-MM-DD`). Les
+anciens documents restent valides car ces champs sont facultatifs. La date de la frise
+reste le champ existant `date`.
+
+L'expiration est exécutée côté serveur, même sans navigateur ouvert. Déployez d'abord
+la fonction et ses secrets, puis appliquez la migration :
+
+```sh
+supabase functions deploy purge-expired-documents
+supabase secrets set FIREBASE_PROJECT_ID=padlet-assembly FIREBASE_CLIENT_EMAIL='…' FIREBASE_PRIVATE_KEY='-----BEGIN PRIVATE KEY-----\n…\n-----END PRIVATE KEY-----\n'
+```
+
+Dans **SQL Editor**, créez ensuite les deux secrets Vault suivants (remplacez les
+valeurs, ne les commitez jamais), puis appliquez
+`supabase/migrations/20260912000000_schedule_expired_documents_purge.sql` :
+
+```sql
+select vault.create_secret('https://VOTRE_PROJECT_REF.supabase.co', 'project_url');
+select vault.create_secret('VOTRE_SERVICE_ROLE_KEY', 'service_role_key');
+```
+
+Le cron appelle quotidiennement la fonction à 00:15 UTC. La fonction demande un jeton
+OAuth au compte de service Firebase stocké dans les secrets, cherche les documents dont
+`expiresAt` est atteint, supprime d'abord leur objet Storage puis leur document
+Firestore. Si Storage échoue, Firestore est conservé et le prochain cron réessaie.
+Le compte de service Firebase doit avoir le rôle minimal permettant de lire/supprimer
+les documents Firestore (par exemple **Cloud Datastore User**). Le `service_role` reste
+strictement dans Vault et dans l'environnement Edge Function, jamais dans le frontend.
+
 ## Configuration Supabase
 
 1. Dans Supabase, créez un bucket **public** nommé `documents`.

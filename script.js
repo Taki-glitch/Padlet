@@ -31,7 +31,9 @@ const timelineContainer = $("timeline-container");
 const timelineScroll = $("timeline-scroll");
 const formModal = $("form-modal");
 const readModal = $("read-modal");
+const timelineFormModal = $("timeline-form-modal");
 const docForm = $("doc-form");
+const timelineForm = $("timeline-form");
 const status = $("app-status");
 const searchInput = $("document-search");
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -51,6 +53,85 @@ function formatTags(tags = "") { return tags.split(",").map((tag) => tag.trim())
 
 function normalizeSearchText(value = "") {
     return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr-FR");
+}
+
+function appendInlineMarkdown(container, value) {
+    const pattern = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|\[([^\]]+)\]\(([^\s)]+)\)/g;
+    let lastIndex = 0;
+    for (const match of String(value).matchAll(pattern)) {
+        container.append(document.createTextNode(value.slice(lastIndex, match.index)));
+        if (match[1]) {
+            const strong = document.createElement("strong");
+            strong.textContent = match[2];
+            container.append(strong);
+        } else if (match[3]) {
+            const emphasis = document.createElement("em");
+            emphasis.textContent = match[4];
+            container.append(emphasis);
+        } else {
+            const url = match[6];
+            try {
+                const parsedUrl = new URL(url);
+                if (["http:", "https:", "mailto:"].includes(parsedUrl.protocol)) {
+                    const link = document.createElement("a");
+                    link.href = parsedUrl.href;
+                    link.target = "_blank";
+                    link.rel = "noopener noreferrer";
+                    link.textContent = match[5];
+                    container.append(link);
+                } else container.append(document.createTextNode(match[0]));
+            } catch { container.append(document.createTextNode(match[0])); }
+        }
+        lastIndex = match.index + match[0].length;
+    }
+    container.append(document.createTextNode(value.slice(lastIndex)));
+}
+
+function appendParagraph(container, lines) {
+    const paragraph = document.createElement("p");
+    lines.forEach((line, index) => {
+        if (index) paragraph.append(document.createElement("br"));
+        appendInlineMarkdown(paragraph, line);
+    });
+    container.append(paragraph);
+}
+
+function renderMarkdownSummary(container, value) {
+    container.replaceChildren();
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+    let index = 0;
+    while (index < lines.length) {
+        if (!lines[index].trim()) { index += 1; continue; }
+        const heading = lines[index].match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+            const element = document.createElement(`h${heading[1].length}`);
+            appendInlineMarkdown(element, heading[2]);
+            container.append(element); index += 1; continue;
+        }
+        const quote = lines[index].match(/^>\s?(.*)$/);
+        if (quote) {
+            const blockquote = document.createElement("blockquote");
+            const quoteLines = [];
+            while (index < lines.length && (lines[index].match(/^>\s?(.*)$/))) quoteLines.push(lines[index++].replace(/^>\s?/, ""));
+            appendParagraph(blockquote, quoteLines); container.append(blockquote); continue;
+        }
+        const list = lines[index].match(/^(?:[-*+]\s+|\d+\.\s+)(.*)$/);
+        if (list) {
+            const ordered = /^\d+\.\s+/.test(lines[index]);
+            const element = document.createElement(ordered ? "ol" : "ul");
+            const matcher = ordered ? /^\d+\.\s+(.*)$/ : /^[-*+]\s+(.*)$/;
+            while (index < lines.length) {
+                const entry = lines[index].match(matcher);
+                if (!entry) break;
+                const item = document.createElement("li");
+                appendInlineMarkdown(item, entry[1]); element.append(item); index += 1;
+            }
+            container.append(element); continue;
+        }
+        const paragraphLines = [];
+        while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+|^>\s?|^(?:[-*+]\s+|\d+\.\s+)/.test(lines[index])) paragraphLines.push(lines[index++]);
+        appendParagraph(container, paragraphLines);
+    }
 }
 
 function filteredItems() {
@@ -168,12 +249,18 @@ function renderThemes() {
 function createEmpty(message) { const el = document.createElement("p"); el.className = "empty-state"; el.textContent = message; return el; }
 function sortByDate(a, b) { return new Date(a.date) - new Date(b.date); }
 
+function timelineDate(item) { return item.timelineDate || item.date; }
+function timelineTitle(item) { return item.timelineTitle || item.title; }
+function timelineBaseContent(item) { return item.type === "document" ? (item.summary || "") : (item.description || ""); }
+function timelineContent(item) { return item.timelineContent || timelineBaseContent(item); }
+function sortTimelineByDate(a, b) { return new Date(timelineDate(a)) - new Date(timelineDate(b)); }
+
 function createDocumentCard(item) {
     const card = document.createElement("article");
     card.className = "doc-card";
     const title = document.createElement("h4"); title.textContent = item.title;
     const date = document.createElement("p"); date.className = "card-date"; date.textContent = dateLabel(item.date);
-    const summary = document.createElement("p"); summary.textContent = item.summary || "Sans résumé";
+    const summary = document.createElement("div"); summary.className = "doc-summary-preview"; renderMarkdownSummary(summary, item.summary || "Sans résumé");
     const actions = createActions(item);
     card.append(title, date, summary, actions);
     card.addEventListener("click", () => openReadModal(item));
@@ -191,7 +278,7 @@ function createActions(item) {
 
 function renderTimeline() {
     timelineContainer.replaceChildren();
-    const sorted = [...filteredItems()].sort(sortByDate);
+    const sorted = [...filteredItems()].sort(sortTimelineByDate);
     if (!sorted.length) { timelineContainer.append(createEmpty(searchInput.value.trim() ? "Aucun élément ne correspond à votre recherche." : "Votre frise apparaîtra ici.")); return; }
     const width = Math.max(900, 230 + (sorted.length - 1) * 230);
     timelineContainer.style.setProperty("--timeline-width", `${width}px`);
@@ -199,14 +286,28 @@ function renderTimeline() {
         const marker = document.createElement("article");
         marker.className = `timeline-marker ${item.type === "deadline" ? "deadline" : "document"}`;
         marker.style.left = `${index === 0 ? 7 : 7 + (index / Math.max(1, sorted.length - 1)) * 86}%`;
-        if (item.type === "deadline") marker.style.setProperty("--marker-color", item.color || "#f97316");
+        const markerColor = item.timelineColor || (item.type === "deadline" ? item.color || "#f97316" : "");
+        if (markerColor) { marker.style.setProperty("--marker-color", markerColor); marker.classList.add("custom-color"); }
         const label = document.createElement("div"); label.className = "timeline-label";
-        const title = document.createElement("strong"); title.textContent = `${item.type === "deadline" ? "◆ " : ""}${item.title}`;
-        const time = document.createElement("time"); time.textContent = dateLabel(item.date);
-        label.append(title, time); marker.append(label);
+        const title = document.createElement("strong"); title.textContent = `${item.type === "deadline" ? "◆ " : ""}${timelineTitle(item)}`;
+        const time = document.createElement("time"); time.textContent = dateLabel(timelineDate(item));
+        const content = document.createElement("div"); content.className = "timeline-content"; renderMarkdownSummary(content, timelineContent(item));
+        const edit = document.createElement("button"); edit.type = "button"; edit.className = "timeline-edit"; edit.textContent = "Modifier";
+        edit.addEventListener("click", (event) => { event.stopPropagation(); openTimelineForm(item); });
+        label.append(title, time, content, edit); marker.append(label);
         marker.addEventListener("click", () => { if (!isDragging) openReadModal(item); });
         timelineContainer.append(marker);
     });
+}
+
+function openTimelineForm(item) {
+    $("timeline-item-id").value = item.id;
+    $("timeline-date").value = timelineDate(item);
+    $("timeline-title").value = timelineTitle(item);
+    $("timeline-content").value = timelineContent(item);
+    $("timeline-color").value = item.timelineColor || "";
+    timelineFormModal.classList.remove("hidden");
+    $("timeline-date").focus();
 }
 
 function toggleTypeFields() {
@@ -289,6 +390,30 @@ docForm.addEventListener("submit", async (event) => {
     finally { submit.disabled = false; submit.textContent = "Enregistrer"; }
 });
 
+timelineForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = $("timeline-item-id").value;
+    const item = items.find((entry) => entry.id === id);
+    if (!item) { setStatus("Cet événement n’existe plus.", true); timelineFormModal.classList.add("hidden"); return; }
+    const submit = $("submit-timeline-form"); submit.disabled = true; submit.textContent = "Enregistrement…";
+    const date = $("timeline-date").value;
+    const title = $("timeline-title").value.trim();
+    const content = $("timeline-content").value.trim();
+    try {
+        await setDoc(doc(db, "padletItems", id), {
+            timelineDate: date === item.date ? "" : date,
+            timelineTitle: title === item.title ? "" : title,
+            timelineContent: content === timelineBaseContent(item) ? "" : content,
+            timelineColor: $("timeline-color").value
+        }, { merge: true });
+        timelineFormModal.classList.add("hidden");
+        setStatus("Personnalisation de la frise enregistrée.");
+    } catch (error) {
+        console.error(error);
+        setStatus("Impossible d’enregistrer la personnalisation de la frise.", true);
+    } finally { submit.disabled = false; submit.textContent = "Enregistrer"; }
+});
+
 async function removeItem(item) {
     if (!window.confirm(`Supprimer « ${item.title} » ?`)) return;
     try {
@@ -302,7 +427,9 @@ function openReadModal(item) {
     $("read-type").textContent = item.type === "deadline" ? "Échéance" : "Document";
     $("read-title").textContent = item.title; $("read-date").textContent = dateLabel(item.date);
     $("read-theme").textContent = item.theme || ""; $("read-theme-wrap").classList.toggle("hidden", !item.theme);
-    $("read-summary").textContent = item.type === "deadline" ? (item.description || "Aucune précision.") : (item.summary || "");
+    const summary = $("read-summary");
+    if (item.type === "deadline") summary.textContent = item.description || "Aucune précision.";
+    else renderMarkdownSummary(summary, item.summary);
     $("read-content").textContent = item.type === "document" ? (item.content || "") : "";
     const tags = $("read-tags"); tags.replaceChildren();
     if (item.type === "document") formatTags(item.tags).forEach((tag) => { const el = document.createElement("span"); el.className = "tag"; el.textContent = tag; tags.append(el); });
@@ -320,8 +447,9 @@ document.querySelectorAll('input[name="item-type"]').forEach((input) => input.ad
 searchInput.addEventListener("input", render);
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
 $("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", () => readModal.classList.add("hidden"));
-window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) readModal.classList.add("hidden"); });
-window.addEventListener("keydown", (event) => { if (event.key === "Escape") { formModal.classList.add("hidden"); readModal.classList.add("hidden"); } });
+$("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));
+window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) readModal.classList.add("hidden"); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); });
+window.addEventListener("keydown", (event) => { if (event.key === "Escape") { formModal.classList.add("hidden"); readModal.classList.add("hidden"); timelineFormModal.classList.add("hidden"); } });
 
 timelineScroll.addEventListener("mousedown", (event) => { isDragging = false; dragStartX = event.pageX - timelineScroll.offsetLeft; startScrollLeft = timelineScroll.scrollLeft; timelineScroll.classList.add("dragging"); });
 timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.classList.contains("dragging")) return; event.preventDefault(); const distance = (event.pageX - timelineScroll.offsetLeft) - dragStartX; if (Math.abs(distance) > 4) isDragging = true; timelineScroll.scrollLeft = startScrollLeft - distance; });

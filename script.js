@@ -31,7 +31,9 @@ const timelineContainer = $("timeline-container");
 const timelineScroll = $("timeline-scroll");
 const formModal = $("form-modal");
 const readModal = $("read-modal");
+const timelineFormModal = $("timeline-form-modal");
 const docForm = $("doc-form");
+const timelineForm = $("timeline-form");
 const status = $("app-status");
 const searchInput = $("document-search");
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -247,6 +249,12 @@ function renderThemes() {
 function createEmpty(message) { const el = document.createElement("p"); el.className = "empty-state"; el.textContent = message; return el; }
 function sortByDate(a, b) { return new Date(a.date) - new Date(b.date); }
 
+function timelineDate(item) { return item.timelineDate || item.date; }
+function timelineTitle(item) { return item.timelineTitle || item.title; }
+function timelineBaseContent(item) { return item.type === "document" ? (item.summary || "") : (item.description || ""); }
+function timelineContent(item) { return item.timelineContent || timelineBaseContent(item); }
+function sortTimelineByDate(a, b) { return new Date(timelineDate(a)) - new Date(timelineDate(b)); }
+
 function createDocumentCard(item) {
     const card = document.createElement("article");
     card.className = "doc-card";
@@ -270,7 +278,7 @@ function createActions(item) {
 
 function renderTimeline() {
     timelineContainer.replaceChildren();
-    const sorted = [...filteredItems()].sort(sortByDate);
+    const sorted = [...filteredItems()].sort(sortTimelineByDate);
     if (!sorted.length) { timelineContainer.append(createEmpty(searchInput.value.trim() ? "Aucun élément ne correspond à votre recherche." : "Votre frise apparaîtra ici.")); return; }
     const width = Math.max(900, 230 + (sorted.length - 1) * 230);
     timelineContainer.style.setProperty("--timeline-width", `${width}px`);
@@ -278,14 +286,28 @@ function renderTimeline() {
         const marker = document.createElement("article");
         marker.className = `timeline-marker ${item.type === "deadline" ? "deadline" : "document"}`;
         marker.style.left = `${index === 0 ? 7 : 7 + (index / Math.max(1, sorted.length - 1)) * 86}%`;
-        if (item.type === "deadline") marker.style.setProperty("--marker-color", item.color || "#f97316");
+        const markerColor = item.timelineColor || (item.type === "deadline" ? item.color || "#f97316" : "");
+        if (markerColor) { marker.style.setProperty("--marker-color", markerColor); marker.classList.add("custom-color"); }
         const label = document.createElement("div"); label.className = "timeline-label";
-        const title = document.createElement("strong"); title.textContent = `${item.type === "deadline" ? "◆ " : ""}${item.title}`;
-        const time = document.createElement("time"); time.textContent = dateLabel(item.date);
-        label.append(title, time); marker.append(label);
+        const title = document.createElement("strong"); title.textContent = `${item.type === "deadline" ? "◆ " : ""}${timelineTitle(item)}`;
+        const time = document.createElement("time"); time.textContent = dateLabel(timelineDate(item));
+        const content = document.createElement("div"); content.className = "timeline-content"; renderMarkdownSummary(content, timelineContent(item));
+        const edit = document.createElement("button"); edit.type = "button"; edit.className = "timeline-edit"; edit.textContent = "Modifier";
+        edit.addEventListener("click", (event) => { event.stopPropagation(); openTimelineForm(item); });
+        label.append(title, time, content, edit); marker.append(label);
         marker.addEventListener("click", () => { if (!isDragging) openReadModal(item); });
         timelineContainer.append(marker);
     });
+}
+
+function openTimelineForm(item) {
+    $("timeline-item-id").value = item.id;
+    $("timeline-date").value = timelineDate(item);
+    $("timeline-title").value = timelineTitle(item);
+    $("timeline-content").value = timelineContent(item);
+    $("timeline-color").value = item.timelineColor || "";
+    timelineFormModal.classList.remove("hidden");
+    $("timeline-date").focus();
 }
 
 function toggleTypeFields() {
@@ -368,6 +390,30 @@ docForm.addEventListener("submit", async (event) => {
     finally { submit.disabled = false; submit.textContent = "Enregistrer"; }
 });
 
+timelineForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const id = $("timeline-item-id").value;
+    const item = items.find((entry) => entry.id === id);
+    if (!item) { setStatus("Cet événement n’existe plus.", true); timelineFormModal.classList.add("hidden"); return; }
+    const submit = $("submit-timeline-form"); submit.disabled = true; submit.textContent = "Enregistrement…";
+    const date = $("timeline-date").value;
+    const title = $("timeline-title").value.trim();
+    const content = $("timeline-content").value.trim();
+    try {
+        await setDoc(doc(db, "padletItems", id), {
+            timelineDate: date === item.date ? "" : date,
+            timelineTitle: title === item.title ? "" : title,
+            timelineContent: content === timelineBaseContent(item) ? "" : content,
+            timelineColor: $("timeline-color").value
+        }, { merge: true });
+        timelineFormModal.classList.add("hidden");
+        setStatus("Personnalisation de la frise enregistrée.");
+    } catch (error) {
+        console.error(error);
+        setStatus("Impossible d’enregistrer la personnalisation de la frise.", true);
+    } finally { submit.disabled = false; submit.textContent = "Enregistrer"; }
+});
+
 async function removeItem(item) {
     if (!window.confirm(`Supprimer « ${item.title} » ?`)) return;
     try {
@@ -401,8 +447,9 @@ document.querySelectorAll('input[name="item-type"]').forEach((input) => input.ad
 searchInput.addEventListener("input", render);
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
 $("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", () => readModal.classList.add("hidden"));
-window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) readModal.classList.add("hidden"); });
-window.addEventListener("keydown", (event) => { if (event.key === "Escape") { formModal.classList.add("hidden"); readModal.classList.add("hidden"); } });
+$("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));
+window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) readModal.classList.add("hidden"); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); });
+window.addEventListener("keydown", (event) => { if (event.key === "Escape") { formModal.classList.add("hidden"); readModal.classList.add("hidden"); timelineFormModal.classList.add("hidden"); } });
 
 timelineScroll.addEventListener("mousedown", (event) => { isDragging = false; dragStartX = event.pageX - timelineScroll.offsetLeft; startScrollLeft = timelineScroll.scrollLeft; timelineScroll.classList.add("dragging"); });
 timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.classList.contains("dragging")) return; event.preventDefault(); const distance = (event.pageX - timelineScroll.offsetLeft) - dragStartX; if (Math.abs(distance) > 4) isDragging = true; timelineScroll.scrollLeft = startScrollLeft - distance; });

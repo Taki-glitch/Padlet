@@ -260,7 +260,7 @@ function createDocumentCard(item) {
     card.className = "doc-card";
     const title = document.createElement("h4"); title.textContent = item.title;
     const date = document.createElement("p"); date.className = "card-date"; date.textContent = dateLabel(item.date);
-    const summary = document.createElement("p"); summary.textContent = item.summary || "Sans résumé";
+    const summary = document.createElement("div"); summary.className = "doc-summary-preview"; renderMarkdownSummary(summary, item.summary || "Sans résumé");
     const actions = createActions(item);
     card.append(title, date, summary, actions);
     card.addEventListener("click", () => openReadModal(item));

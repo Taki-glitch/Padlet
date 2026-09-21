@@ -61,7 +61,8 @@
                 <div id="document-fields">
                     <label>Thème <input type="text" id="doc-theme" placeholder="Ex. Histoire, Code…"></label>
                     <label>Tags <input type="text" id="doc-tags" placeholder="Séparés par des virgules"></label>
-                    <label>Résumé <textarea id="doc-summary" placeholder="Résumé court…"></textarea></label>
+                    <label>Résumé <textarea id="doc-summary" placeholder="Résumé du document…" aria-describedby="summary-hint"></textarea></label>
+                    <small id="summary-hint">Vous pouvez utiliser Markdown : <strong>**gras**</strong>, <em>*italique*</em>, titres, listes et citations.</small>
                     <label>Contenu ou lien <textarea id="doc-content" placeholder="Notes, contenu complet ou lien…"></textarea></label>
                     <label>Fichier <input type="file" id="doc-file" aria-describedby="file-hint"></label>
                     <small id="file-hint">Image, PDF ou tout autre fichier. Laissez vide pour conserver le fichier actuel.</small>
@@ -92,9 +93,39 @@
             <h2 id="read-title"></h2>
             <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span></div>
             <div id="read-tags" class="tags-container"></div>
-            <p id="read-summary" class="read-summary"></p>
+            <div id="read-summary" class="read-summary"></div>
             <p id="read-content"></p>
             <div id="read-file" class="file-preview"></div>
+        </div>
+    </div>
+
+    <div id="timeline-form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="timeline-form-title">
+        <div class="modal-content form-content">
+            <button class="close-btn" id="close-timeline-form" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="timeline-form-title">Personnaliser l’événement</h2>
+            <form id="timeline-form">
+                <input type="hidden" id="timeline-item-id">
+                <label>Date affichée <input type="date" id="timeline-date" required></label>
+                <label>Titre affiché <input type="text" id="timeline-title" placeholder="Titre de l’événement"></label>
+                <label>Contenu affiché <textarea id="timeline-content" aria-describedby="timeline-content-hint" placeholder="Contenu de l’événement"></textarea></label>
+                <small id="timeline-content-hint">Vous pouvez utiliser Markdown : <strong>**gras**</strong>, <em>*italique*</em>, titres, listes et citations.</small>
+                <label>Couleur
+                    <select id="timeline-color">
+                        <option value="">Automatique</option>
+                        <option value="#4f46e5">Bleu</option>
+                        <option value="#7c3aed">Violet</option>
+                        <option value="#16a34a">Vert</option>
+                        <option value="#f97316">Orange</option>
+                        <option value="#dc2626">Rouge</option>
+                        <option value="#ca8a04">Jaune</option>
+                        <option value="#64748b">Gris</option>
+                    </select>
+                </label>
+                <div class="form-actions">
+                    <button id="cancel-timeline-form" type="button">Annuler</button>
+                    <button id="submit-timeline-form" type="submit" class="btn-primary">Enregistrer</button>
+                </div>
+            </form>
         </div>
     </div>
 

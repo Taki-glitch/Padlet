@@ -61,7 +61,8 @@
                 <div id="document-fields">
                     <label>Thème <input type="text" id="doc-theme" placeholder="Ex. Histoire, Code…"></label>
                     <label>Tags <input type="text" id="doc-tags" placeholder="Séparés par des virgules"></label>
-                    <label>Résumé <textarea id="doc-summary" placeholder="Résumé court…"></textarea></label>
+                    <label>Résumé <textarea id="doc-summary" placeholder="Résumé du document…" aria-describedby="summary-hint"></textarea></label>
+                    <small id="summary-hint">Vous pouvez utiliser Markdown : <strong>**gras**</strong>, <em>*italique*</em>, titres, listes et citations.</small>
                     <label>Contenu ou lien <textarea id="doc-content" placeholder="Notes, contenu complet ou lien…"></textarea></label>
                     <label>Fichier <input type="file" id="doc-file" aria-describedby="file-hint"></label>
                     <small id="file-hint">Image, PDF ou tout autre fichier. Laissez vide pour conserver le fichier actuel.</small>
@@ -92,7 +93,7 @@
             <h2 id="read-title"></h2>
             <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span></div>
             <div id="read-tags" class="tags-container"></div>
-            <p id="read-summary" class="read-summary"></p>
+            <div id="read-summary" class="read-summary"></div>
             <p id="read-content"></p>
             <div id="read-file" class="file-preview"></div>
         </div>

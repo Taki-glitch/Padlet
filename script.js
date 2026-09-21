@@ -53,6 +53,85 @@ function normalizeSearchText(value = "") {
     return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr-FR");
 }
 
+function appendInlineMarkdown(container, value) {
+    const pattern = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|\[([^\]]+)\]\(([^\s)]+)\)/g;
+    let lastIndex = 0;
+    for (const match of String(value).matchAll(pattern)) {
+        container.append(document.createTextNode(value.slice(lastIndex, match.index)));
+        if (match[1]) {
+            const strong = document.createElement("strong");
+            strong.textContent = match[2];
+            container.append(strong);
+        } else if (match[3]) {
+            const emphasis = document.createElement("em");
+            emphasis.textContent = match[4];
+            container.append(emphasis);
+        } else {
+            const url = match[6];
+            try {
+                const parsedUrl = new URL(url);
+                if (["http:", "https:", "mailto:"].includes(parsedUrl.protocol)) {
+                    const link = document.createElement("a");
+                    link.href = parsedUrl.href;
+                    link.target = "_blank";
+                    link.rel = "noopener noreferrer";
+                    link.textContent = match[5];
+                    container.append(link);
+                } else container.append(document.createTextNode(match[0]));
+            } catch { container.append(document.createTextNode(match[0])); }
+        }
+        lastIndex = match.index + match[0].length;
+    }
+    container.append(document.createTextNode(value.slice(lastIndex)));
+}
+
+function appendParagraph(container, lines) {
+    const paragraph = document.createElement("p");
+    lines.forEach((line, index) => {
+        if (index) paragraph.append(document.createElement("br"));
+        appendInlineMarkdown(paragraph, line);
+    });
+    container.append(paragraph);
+}
+
+function renderMarkdownSummary(container, value) {
+    container.replaceChildren();
+    const lines = String(value || "").replace(/\r\n?/g, "\n").split("\n");
+    let index = 0;
+    while (index < lines.length) {
+        if (!lines[index].trim()) { index += 1; continue; }
+        const heading = lines[index].match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+            const element = document.createElement(`h${heading[1].length}`);
+            appendInlineMarkdown(element, heading[2]);
+            container.append(element); index += 1; continue;
+        }
+        const quote = lines[index].match(/^>\s?(.*)$/);
+        if (quote) {
+            const blockquote = document.createElement("blockquote");
+            const quoteLines = [];
+            while (index < lines.length && (lines[index].match(/^>\s?(.*)$/))) quoteLines.push(lines[index++].replace(/^>\s?/, ""));
+            appendParagraph(blockquote, quoteLines); container.append(blockquote); continue;
+        }
+        const list = lines[index].match(/^(?:[-*+]\s+|\d+\.\s+)(.*)$/);
+        if (list) {
+            const ordered = /^\d+\.\s+/.test(lines[index]);
+            const element = document.createElement(ordered ? "ol" : "ul");
+            const matcher = ordered ? /^\d+\.\s+(.*)$/ : /^[-*+]\s+(.*)$/;
+            while (index < lines.length) {
+                const entry = lines[index].match(matcher);
+                if (!entry) break;
+                const item = document.createElement("li");
+                appendInlineMarkdown(item, entry[1]); element.append(item); index += 1;
+            }
+            container.append(element); continue;
+        }
+        const paragraphLines = [];
+        while (index < lines.length && lines[index].trim() && !/^(#{1,3})\s+|^>\s?|^(?:[-*+]\s+|\d+\.\s+)/.test(lines[index])) paragraphLines.push(lines[index++]);
+        appendParagraph(container, paragraphLines);
+    }
+}
+
 function filteredItems() {
     const terms = normalizeSearchText(searchInput.value).trim().split(/\s+/).filter(Boolean);
     if (!terms.length) return items;
@@ -302,7 +381,9 @@ function openReadModal(item) {
     $("read-type").textContent = item.type === "deadline" ? "Échéance" : "Document";
     $("read-title").textContent = item.title; $("read-date").textContent = dateLabel(item.date);
     $("read-theme").textContent = item.theme || ""; $("read-theme-wrap").classList.toggle("hidden", !item.theme);
-    $("read-summary").textContent = item.type === "deadline" ? (item.description || "Aucune précision.") : (item.summary || "");
+    const summary = $("read-summary");
+    if (item.type === "deadline") summary.textContent = item.description || "Aucune précision.";
+    else renderMarkdownSummary(summary, item.summary);
     $("read-content").textContent = item.type === "document" ? (item.content || "") : "";
     const tags = $("read-tags"); tags.replaceChildren();
     if (item.type === "document") formatTags(item.tags).forEach((tag) => { const el = document.createElement("span"); el.className = "tag"; el.textContent = tag; tags.append(el); });

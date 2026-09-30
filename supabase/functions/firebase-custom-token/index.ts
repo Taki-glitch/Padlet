@@ -5,7 +5,11 @@ const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 const firebaseClientEmail = Deno.env.get("FIREBASE_CLIENT_EMAIL") ?? "";
 const firebasePrivateKey = (Deno.env.get("FIREBASE_PRIVATE_KEY") ?? "").replace(/\\n/g, "\n");
 
-const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type" };
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, OPTIONS"
+};
 function base64Url(value: string | Uint8Array) { const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value; let binary = ""; bytes.forEach((byte) => binary += String.fromCharCode(byte)); return btoa(binary).replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_"); }
 
 async function createFirebaseCustomToken(uid: string) {

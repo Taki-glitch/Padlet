@@ -15,6 +15,7 @@
         <nav aria-label="Vues et actions">
             <span id="auth-user" class="auth-user hidden" aria-live="polite"></span>
             <button id="btn-sign-out" class="hidden" type="button">Se déconnecter</button>
+            <button id="btn-admin-users" class="hidden" type="button">Utilisateurs</button>
             <button id="btn-theme" class="active" type="button">Vue par thèmes</button>
             <button id="btn-timeline" type="button">Frise chronologique</button>
             <button id="btn-add" class="btn-primary" type="button">+ Ajouter</button>
@@ -141,6 +142,24 @@
                     <button id="submit-timeline-form" type="submit" class="btn-primary">Enregistrer</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <div id="admin-users-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="admin-users-title">
+        <div class="modal-content admin-users-content">
+            <button class="close-btn" id="close-admin-users" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="admin-users-title">Gestion des utilisateurs</h2>
+            <form id="admin-create-user-form">
+                <h3>Créer un utilisateur</h3>
+                <label>Identifiant <input id="admin-new-username" type="text" autocomplete="off" minlength="3" maxlength="32" required></label>
+                <label>Mot de passe <input id="admin-new-password" type="password" autocomplete="new-password" minlength="8" required></label>
+                <label>Rôle
+                    <select id="admin-new-role"><option value="user">Utilisateur</option><option value="admin">Administrateur</option></select>
+                </label>
+                <button id="admin-create-user-submit" class="btn-primary" type="submit">Créer</button>
+            </form>
+            <p id="admin-users-status" class="app-status" role="status"></p>
+            <div id="admin-users-list" class="admin-users-list" aria-live="polite"></div>
         </div>
     </div>
 

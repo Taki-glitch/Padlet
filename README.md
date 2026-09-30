@@ -73,11 +73,13 @@ une syntaxe e-mail compatible avec l'API `signInWithPassword` et avec
    depuis le navigateur.
 2. Dans **SQL Editor**, exécutez les migrations, dans cet ordre :
    `supabase/migrations/20260930000000_profiles_and_auth.sql`, puis
-   `supabase/migrations/20260930000001_authenticated_documents_storage.sql`.
+   `supabase/migrations/20260930000001_authenticated_documents_storage.sql`, puis
+   `supabase/migrations/20260930000002_admin_only_documents_storage.sql`.
    La première crée `profiles`, les rôles `admin`/`user`, RLS, et le déclencheur
-   qui crée le profil lors de la création Auth. La seconde remplace les écritures
-   Storage anonymes par des écritures d'utilisateurs authentifiés sans changer les
-   URLs publiques existantes.
+   qui crée le profil lors de la création Auth. Les deux suivantes conservent la
+   lecture des fichiers pour les utilisateurs authentifiés, mais réservent les
+   écritures et suppressions Storage aux administrateurs, sans changer les URLs
+   publiques existantes.
 3. Créez le premier administrateur **maintenant**, avant le déploiement de la
    fonction de gestion : ouvrez **Authentication > Users > Add user**. Saisissez
    par exemple `premier-admin@auth.padlet.invalid`, choisissez un mot de passe
@@ -102,9 +104,17 @@ une syntaxe e-mail compatible avec l'API `signInWithPassword` et avec
 5. Déployez les fonctions seulement après les secrets :
 
    ```sh
-   supabase functions deploy firebase-custom-token
-   supabase functions deploy admin-users
+   supabase functions deploy firebase-custom-token --no-verify-jwt
+   supabase functions deploy admin-users --no-verify-jwt
    ```
+
+   La configuration versionnée `supabase/config.toml` désactive la vérification
+   JWT de passerelle pour les deux fonctions appelées depuis le navigateur afin
+   que leurs réponses `OPTIONS` puissent satisfaire le préflight CORS. Chacune
+   vérifie toujours elle-même `Authorization: Bearer <Supabase JWT>` avec
+   `supabase.auth.getUser()`. `firebase-custom-token` lit en plus le rôle réel
+   dans `profiles` et signe le claim Firebase `role` ; `admin-users` relit ce rôle
+   côté serveur avant chaque action.
 
    `admin-users` exige un appelant dont `profiles.role = 'admin'`. Ses actions JSON
    sont `list`, `create`, `update`, `reset-password` et `delete`; aucun mot de
@@ -122,6 +132,11 @@ une syntaxe e-mail compatible avec l'API `signInWithPassword` et avec
    Database > Rules**, remplacez les règles publiques par le contenu de
    `firestore.rules`, puis cliquez **Publish**. Ne publiez pas le fichier avant
    qu'une connexion frontend ait effectivement reçu et utilisé un Custom Token.
+   Les règles autorisent la lecture de `padletItems` à tout utilisateur Firebase
+   authentifié, mais exigent le claim `request.auth.token.role == 'admin'` pour
+   créer, modifier ou supprimer. Après un changement de rôle, l'utilisateur
+   concerné doit se déconnecter puis se reconnecter afin de recevoir un nouveau
+   Custom Token Firebase avec son nouveau claim.
 
 ### Vérification fonctionnelle avant les règles Firestore
 

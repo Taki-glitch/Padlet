@@ -1,0 +1,4 @@
+# `firebase-custom-token` validates the Supabase bearer token itself so that its
+# handler can answer unauthenticated CORS preflight requests before any auth check.
+[functions.firebase-custom-token]
+verify_jwt = false

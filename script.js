@@ -47,7 +47,10 @@ let unsubscribeItems = null;
 // Edge Functions (voir README).
 const TECHNICAL_EMAIL_DOMAIN = "auth.padlet.invalid";
 function normalizeUsername(value) { return value.trim().toLowerCase(); }
-function technicalEmail(username) { return `${normalizeUsername(username)}@${TECHNICAL_EMAIL_DOMAIN}`; }
+function technicalEmail(username) {
+    const normalized = normalizeUsername(username);
+    return normalized.includes("@") ? normalized : `${normalized}@${TECHNICAL_EMAIL_DOMAIN}`;
+}
 
 function setStatus(message, isError = false) {
     status.textContent = message;

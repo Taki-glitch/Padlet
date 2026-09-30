@@ -102,9 +102,17 @@ une syntaxe e-mail compatible avec l'API `signInWithPassword` et avec
 5. Déployez les fonctions seulement après les secrets :
 
    ```sh
-   supabase functions deploy firebase-custom-token
+   supabase functions deploy firebase-custom-token --no-verify-jwt
    supabase functions deploy admin-users
    ```
+
+   La configuration versionnée `supabase/config.toml` désactive aussi la
+   vérification JWT de passerelle pour **`firebase-custom-token` uniquement**.
+   C'est indispensable pour que sa réponse `OPTIONS` puisse satisfaire le
+   préflight CORS. La fonction vérifie toujours elle-même
+   `Authorization: Bearer <Supabase JWT>` avec `supabase.auth.getUser()` avant
+   de créer un jeton Firebase. `admin-users` conserve la vérification JWT de la
+   passerelle.
 
    `admin-users` exige un appelant dont `profiles.role = 'admin'`. Ses actions JSON
    sont `list`, `create`, `update`, `reset-password` et `delete`; aucun mot de

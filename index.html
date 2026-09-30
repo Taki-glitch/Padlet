@@ -13,6 +13,8 @@
             <h1>📚 Mon Mur de Documents</h1>
         </div>
         <nav aria-label="Vues et actions">
+            <span id="auth-user" class="auth-user hidden" aria-live="polite"></span>
+            <button id="btn-sign-out" class="hidden" type="button">Se déconnecter</button>
             <button id="btn-theme" class="active" type="button">Vue par thèmes</button>
             <button id="btn-timeline" type="button">Frise chronologique</button>
             <button id="btn-add" class="btn-primary" type="button">+ Ajouter</button>
@@ -40,6 +42,19 @@
             </div>
         </section>
     </main>
+
+    <div id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+        <div class="modal-content auth-content">
+            <h2 id="auth-title">Connexion</h2>
+            <p>Connectez-vous pour accéder au tableau.</p>
+            <form id="auth-form">
+                <label>Identifiant <input id="auth-username" type="text" autocomplete="username" minlength="3" maxlength="32" required></label>
+                <label>Mot de passe <input id="auth-password" type="password" autocomplete="current-password" required></label>
+                <button id="auth-submit" type="submit" class="btn-primary">Se connecter</button>
+            </form>
+            <p id="auth-error" class="auth-error" role="alert"></p>
+        </div>
+    </div>
 
     <div id="form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
         <div class="modal-content form-content">

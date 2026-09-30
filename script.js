@@ -10,11 +10,13 @@ const firebaseConfig = {
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getAuth, signInWithCustomToken, signOut as firebaseSignOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase-config.js";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+const firebaseAuth = getAuth(app);
 const itemsCollection = collection(db, "padletItems");
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
 let items = [];
@@ -38,11 +40,70 @@ const status = $("app-status");
 const searchInput = $("document-search");
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
 let storageUsedBytes = null;
+let unsubscribeItems = null;
+
+// Supabase utilise une adresse technique non distribuable. L'utilisateur ne saisit
+// jamais cette adresse : elle est reconstruite ici avec la même convention que les
+// Edge Functions (voir README).
+const TECHNICAL_EMAIL_DOMAIN = "auth.padlet.invalid";
+function normalizeUsername(value) { return value.trim().toLowerCase(); }
+function technicalEmail(username) { return `${normalizeUsername(username)}@${TECHNICAL_EMAIL_DOMAIN}`; }
 
 function setStatus(message, isError = false) {
     status.textContent = message;
     status.classList.toggle("error", isError);
 }
+
+function setAuthenticatedUi(user) {
+    $("auth-user").textContent = user ? `Connecté : ${user.user_metadata?.username || "utilisateur"}` : "";
+    $("auth-user").classList.toggle("hidden", !user);
+    $("btn-sign-out").classList.toggle("hidden", !user);
+    $("auth-modal").classList.toggle("hidden", Boolean(user));
+}
+
+async function startFirestoreSession() {
+    setStatus("Connexion sécurisée à Firestore…");
+    const { data, error } = await supabase.functions.invoke("firebase-custom-token");
+    if (error) throw error;
+    if (!data?.token) throw new Error("La fonction Firebase n'a pas retourné de jeton.");
+    await signInWithCustomToken(firebaseAuth, data.token);
+    unsubscribeItems?.();
+    unsubscribeItems = onSnapshot(itemsCollection,
+        (snapshot) => { items = snapshot.docs.map((item) => item.data()); render(); setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`); },
+        (error) => { console.error(error); setStatus("Connexion Firestore impossible. Vérifiez votre session Firebase et vos règles Firestore.", true); });
+    await refreshStorageUsage();
+}
+
+async function initialiseAuthentication() {
+    if (!supabase) { setStatus("La configuration Supabase est absente.", true); return; }
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session) { setAuthenticatedUi(null); setStatus("Connectez-vous pour accéder au tableau."); return; }
+    setAuthenticatedUi(session.user);
+    try { await startFirestoreSession(); }
+    catch (error) { console.error(error); setStatus("La connexion Firebase sécurisée a échoué. Contactez un administrateur.", true); }
+}
+
+$("auth-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const username = normalizeUsername($("auth-username").value);
+    const password = $("auth-password").value;
+    const submit = $("auth-submit");
+    $("auth-error").textContent = "";
+    submit.disabled = true;
+    try {
+        const { data, error } = await supabase.auth.signInWithPassword({ email: technicalEmail(username), password });
+        if (error) throw error;
+        setAuthenticatedUi(data.user);
+        await startFirestoreSession();
+    } catch (error) { console.error(error); $("auth-error").textContent = "Identifiant ou mot de passe incorrect, ou connexion indisponible."; }
+    finally { submit.disabled = false; }
+});
+
+$("btn-sign-out").addEventListener("click", async () => {
+    unsubscribeItems?.(); unsubscribeItems = null; items = []; render();
+    await firebaseSignOut(firebaseAuth); await supabase.auth.signOut();
+    setAuthenticatedUi(null); setStatus("Connectez-vous pour accéder au tableau.");
+});
 
 function dateLabel(date) {
     const parsed = new Date(`${date}T12:00:00`);
@@ -457,5 +518,4 @@ timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.cl
 
 function itemOrExistingPublishedAt(id) { return items.find((item) => item.id === id)?.publishedAt || new Date().toISOString(); }
 
-onSnapshot(itemsCollection, (snapshot) => { items = snapshot.docs.map((item) => item.data()); render(); setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`); }, (error) => { console.error(error); setStatus("Connexion Firestore impossible. Vérifiez votre configuration Firebase et vos règles Firestore.", true); });
-refreshStorageUsage();
+initialiseAuthentication();

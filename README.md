@@ -43,7 +43,98 @@ Le compte de service Firebase doit avoir le rôle minimal permettant de lire/sup
 les documents Firestore (par exemple **Cloud Datastore User**). Le `service_role` reste
 strictement dans Vault et dans l'environnement Edge Function, jamais dans le frontend.
 
-## Configuration Supabase
+## Authentification Supabase et pont Firebase
+
+L'application conserve les appels Firestore client existants (`onSnapshot`,
+`setDoc`, `deleteDoc`). Ils ne démarrent désormais qu'après cette chaîne :
+**Supabase Auth → Edge Function `firebase-custom-token` → Firebase Custom Token →
+Firebase Auth → Firestore**. La clé privée du compte de service Firebase ne quitte
+jamais les secrets des Edge Functions ; `SUPABASE_SERVICE_ROLE_KEY` non plus.
+
+### Convention d'identifiant
+
+L'écran ne demande que **Identifiant** et **Mot de passe**. L'identifiant est en
+minuscules, de 3 à 32 caractères (`a-z`, `0-9`, `.`, `_`, `-`) et doit commencer par
+une lettre ou un chiffre. Supabase Auth reçoit en interne l'adresse technique
+`<identifiant>@auth.padlet.invalid`. Le domaine `.invalid` est réservé et non
+distribuable : il évite d'envoyer du courrier à une vraie adresse. Cette adresse a
+une syntaxe e-mail compatible avec l'API `signInWithPassword` et avec
+`auth.admin.createUser`; elle n'est jamais affichée dans l'interface.
+
+### Mise en place obligatoire (dans cet ordre)
+
+> Ne déployez **pas** `firestore.rules` à ce stade. Les règles publiques restent
+> nécessaires uniquement pendant la validation du pont Firebase.
+
+1. Dans Supabase, ouvrez **Authentication > Providers > Email**. Activez Email,
+   puis désactivez **Confirm email** : les adresses `.invalid` ne peuvent pas
+   recevoir de message. Désactivez aussi les inscriptions publiques dans
+   **Authentication > Providers** si l'option est affichée. Ne créez aucun compte
+   depuis le navigateur.
+2. Dans **SQL Editor**, exécutez les migrations, dans cet ordre :
+   `supabase/migrations/20260930000000_profiles_and_auth.sql`, puis
+   `supabase/migrations/20260930000001_authenticated_documents_storage.sql`.
+   La première crée `profiles`, les rôles `admin`/`user`, RLS, et le déclencheur
+   qui crée le profil lors de la création Auth. La seconde remplace les écritures
+   Storage anonymes par des écritures d'utilisateurs authentifiés sans changer les
+   URLs publiques existantes.
+3. Créez le premier administrateur **maintenant**, avant le déploiement de la
+   fonction de gestion : ouvrez **Authentication > Users > Add user**. Saisissez
+   par exemple `premier-admin@auth.padlet.invalid`, choisissez un mot de passe
+   robuste et cochez **Auto Confirm User** si la boîte est proposée. Ensuite, dans
+   **SQL Editor**, exécutez, avec l'identifiant choisi :
+
+   ```sql
+   update public.profiles set role = 'admin'
+   where username = 'premier-admin';
+   ```
+
+   Vérifiez avec `select username, role from public.profiles;`. Ne créez jamais un
+   administrateur en insérant directement dans `auth.users`, et ne mettez jamais
+   le mot de passe dans SQL, un fichier ou un commit.
+4. Dans **Project Settings > Edge Functions > Secrets** (ou via `supabase secrets
+   set`), ajoutez les secrets suivants : `FIREBASE_CLIENT_EMAIL` et
+   `FIREBASE_PRIVATE_KEY` depuis le JSON du compte de service Firebase. La seconde
+   valeur doit contenir la clé PEM complète et rester un secret. `SUPABASE_URL`,
+   `SUPABASE_ANON_KEY` et `SUPABASE_SERVICE_ROLE_KEY` sont fournis à l'exécution
+   des fonctions Supabase; ne copiez jamais `SUPABASE_SERVICE_ROLE_KEY` dans
+   `supabase-config.js` ni dans le navigateur.
+5. Déployez les fonctions seulement après les secrets :
+
+   ```sh
+   supabase functions deploy firebase-custom-token
+   supabase functions deploy admin-users
+   ```
+
+   `admin-users` exige un appelant dont `profiles.role = 'admin'`. Ses actions JSON
+   sont `list`, `create`, `update`, `reset-password` et `delete`; aucun mot de
+   passe n'est retourné ni enregistré en clair.
+6. Dans Firebase Console, ouvrez **Project settings > Service accounts > Firebase
+   Admin SDK > Generate new private key**. Créez un JSON de compte de service,
+   copiez uniquement `client_email` et `private_key` dans les secrets ci-dessus,
+   puis conservez le fichier JSON hors du dépôt. Vérifiez dans **Authentication >
+   Sign-in method** que le projet Firebase est utilisable : l'échange d'un Custom
+   Token créera les utilisateurs Firebase à la première connexion.
+7. Déployez le frontend avec ses valeurs publiques Supabase. Connectez-vous avec
+   le premier administrateur, puis vérifiez les opérations listées ci-dessous avec
+   cet administrateur et un compte `user` créé via `admin-users`.
+8. **Uniquement après ces tests réussis**, ouvrez Firebase Console > **Firestore
+   Database > Rules**, remplacez les règles publiques par le contenu de
+   `firestore.rules`, puis cliquez **Publish**. Ne publiez pas le fichier avant
+   qu'une connexion frontend ait effectivement reçu et utilisé un Custom Token.
+
+### Vérification fonctionnelle avant les règles Firestore
+
+Avec un compte `user`, puis avec un compte `admin`, vérifiez : chargement
+temps-réel (`onSnapshot`), ajout/modification/suppression (`setDoc`, `deleteDoc`),
+documents, résumés Markdown, frise et ses modifications, upload Supabase,
+prévisualisation, compteur de stockage et suppression automatique planifiée.
+Après publication des règles, répétez au minimum la lecture, un ajout, une
+modification de frise et une suppression avec chacun des deux rôles. Les règles
+Firestore accordent le même accès aux deux rôles : le rôle `admin` sert à gérer les
+comptes via l'Edge Function.
+
+### Configuration Supabase
 
 1. Dans Supabase, créez un bucket **public** nommé `documents`.
 2. Copiez `supabase-config.example.js` vers `supabase-config.js` et renseignez
@@ -79,11 +170,12 @@ on storage.objects for delete to anon
 using (bucket_id = 'documents');
 ```
 
-Cette application ne possède pas encore d'authentification Supabase : pour
-permettre l'ajout et la suppression depuis un navigateur public, les rôles `anon`
-doivent donc disposer de ces droits sur ce bucket précis. Pour une application non
-publique, ajoutez Supabase Auth et remplacez les deux dernières politiques par des
-politiques d'accès limitées à `auth.uid()`.
+La migration `20260930000001_authenticated_documents_storage.sql` remplace les
+politiques historiques par les mêmes permissions pour le rôle `authenticated` :
+les uploads, listes nécessaires au compteur et suppressions continuent donc à
+fonctionner après connexion. Le bucket reste public pour ne pas casser les URLs et
+prévisualisations existantes. Rendre le bucket privé plus tard implique de remplacer
+les URLs publiques existantes par des URLs signées et ne doit pas être fait à moitié.
 
 ## Vérification après configuration
 

@@ -41,6 +41,8 @@ const searchInput = $("document-search");
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
 let storageUsedBytes = null;
 let unsubscribeItems = null;
+let currentUser = null;
+let currentProfile = null;
 
 // Supabase utilise une adresse technique non distribuable. L'utilisateur ne saisit
 // jamais cette adresse : elle est reconstruite ici avec la même convention que les
@@ -57,11 +59,37 @@ function setStatus(message, isError = false) {
     status.classList.toggle("error", isError);
 }
 
-function setAuthenticatedUi(user) {
-    $("auth-user").textContent = user ? `Connecté : ${user.user_metadata?.username || "utilisateur"}` : "";
+function isAdmin() { return currentProfile?.role === "admin"; }
+
+function applyRoleUi() {
+    $("btn-add").classList.toggle("hidden", !isAdmin());
+    $("btn-admin-users").classList.toggle("hidden", !isAdmin());
+    formModal.classList.add("hidden");
+    timelineFormModal.classList.add("hidden");
+}
+
+function setAuthenticatedUi(user, profile = null) {
+    currentUser = user;
+    currentProfile = profile;
+    const username = profile?.username || user?.user_metadata?.username || "utilisateur";
+    const roleLabel = profile?.role === "admin" ? "Administrateur" : "Utilisateur";
+    $("auth-user").textContent = user ? `Connecté : ${username} · ${roleLabel}` : "";
     $("auth-user").classList.toggle("hidden", !user);
     $("btn-sign-out").classList.toggle("hidden", !user);
     $("auth-modal").classList.toggle("hidden", Boolean(user));
+    applyRoleUi();
+}
+
+async function loadCurrentProfile(user) {
+    const { data, error } = await supabase.from("profiles").select("username, role").eq("id", user.id).maybeSingle();
+    if (error || !data || !["admin", "user"].includes(data.role)) throw new Error("Profil utilisateur introuvable.");
+    return data;
+}
+
+function requireAdmin() {
+    if (isAdmin()) return true;
+    setStatus("Cette action est réservée aux administrateurs.", true);
+    return false;
 }
 
 async function startFirestoreSession() {
@@ -81,8 +109,10 @@ async function initialiseAuthentication() {
     if (!supabase) { setStatus("La configuration Supabase est absente.", true); return; }
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setAuthenticatedUi(null); setStatus("Connectez-vous pour accéder au tableau."); return; }
-    setAuthenticatedUi(session.user);
-    try { await startFirestoreSession(); }
+    try {
+        setAuthenticatedUi(session.user, await loadCurrentProfile(session.user));
+        await startFirestoreSession();
+    }
     catch (error) { console.error(error); setStatus("La connexion Firebase sécurisée a échoué. Contactez un administrateur.", true); }
 }
 
@@ -96,16 +126,14 @@ $("auth-form").addEventListener("submit", async (event) => {
     try {
         const { data, error } = await supabase.auth.signInWithPassword({ email: technicalEmail(username), password });
         if (error) throw error;
-        setAuthenticatedUi(data.user);
+        setAuthenticatedUi(data.user, await loadCurrentProfile(data.user));
         await startFirestoreSession();
     } catch (error) { console.error(error); $("auth-error").textContent = "Identifiant ou mot de passe incorrect, ou connexion indisponible."; }
     finally { submit.disabled = false; }
 });
 
 $("btn-sign-out").addEventListener("click", async () => {
-    unsubscribeItems?.(); unsubscribeItems = null; items = []; render();
-    await firebaseSignOut(firebaseAuth); await supabase.auth.signOut();
-    setAuthenticatedUi(null); setStatus("Connectez-vous pour accéder au tableau.");
+    await signOutCurrentUser();
 });
 
 function dateLabel(date) {
@@ -333,6 +361,7 @@ function createDocumentCard(item) {
 
 function createActions(item) {
     const actions = document.createElement("div"); actions.className = "doc-actions";
+    if (!isAdmin()) return actions;
     const edit = document.createElement("button"); edit.type = "button"; edit.textContent = "Modifier";
     edit.addEventListener("click", (event) => { event.stopPropagation(); openForm(item); });
     const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete"; remove.textContent = "Supprimer";
@@ -356,15 +385,20 @@ function renderTimeline() {
         const title = document.createElement("strong"); title.textContent = `${item.type === "deadline" ? "◆ " : ""}${timelineTitle(item)}`;
         const time = document.createElement("time"); time.textContent = dateLabel(timelineDate(item));
         const content = document.createElement("div"); content.className = "timeline-content"; renderMarkdownSummary(content, timelineContent(item));
-        const edit = document.createElement("button"); edit.type = "button"; edit.className = "timeline-edit"; edit.textContent = "Modifier";
-        edit.addEventListener("click", (event) => { event.stopPropagation(); openTimelineForm(item); });
-        label.append(title, time, content, edit); marker.append(label);
+        label.append(title, time, content);
+        if (isAdmin()) {
+            const edit = document.createElement("button"); edit.type = "button"; edit.className = "timeline-edit"; edit.textContent = "Modifier";
+            edit.addEventListener("click", (event) => { event.stopPropagation(); openTimelineForm(item); });
+            label.append(edit);
+        }
+        marker.append(label);
         marker.addEventListener("click", () => { if (!isDragging) openReadModal(item); });
         timelineContainer.append(marker);
     });
 }
 
 function openTimelineForm(item) {
+    if (!requireAdmin()) return;
     $("timeline-item-id").value = item.id;
     $("timeline-date").value = timelineDate(item);
     $("timeline-title").value = timelineTitle(item);
@@ -383,6 +417,7 @@ function toggleTypeFields() {
 }
 
 function openForm(item = null) {
+    if (!requireAdmin()) return;
     docForm.reset();
     $("doc-id").value = item?.id || "";
     $("existing-file-url").value = item?.fileUrl || "";
@@ -428,6 +463,7 @@ async function removeSupabaseFile(filePath, throwOnError = false) {
 
 docForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!requireAdmin()) return;
     const type = document.querySelector('input[name="item-type"]:checked').value;
     const id = $("doc-id").value || doc(itemsCollection).id;
     const submit = $("submit-item"); submit.disabled = true; submit.textContent = "Enregistrement…";
@@ -456,6 +492,7 @@ docForm.addEventListener("submit", async (event) => {
 
 timelineForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!requireAdmin()) return;
     const id = $("timeline-item-id").value;
     const item = items.find((entry) => entry.id === id);
     if (!item) { setStatus("Cet événement n’existe plus.", true); timelineFormModal.classList.add("hidden"); return; }
@@ -479,6 +516,7 @@ timelineForm.addEventListener("submit", async (event) => {
 });
 
 async function removeItem(item) {
+    if (!requireAdmin()) return;
     if (!window.confirm(`Supprimer « ${item.title} » ?`)) return;
     try {
         await removeSupabaseFile(item.filePath, true);
@@ -505,15 +543,89 @@ function openReadModal(item) {
     readModal.classList.remove("hidden");
 }
 
+async function callAdminUsers(action, payload = {}) {
+    if (!requireAdmin()) throw new Error("Accès administrateur requis.");
+    const { data, error } = await supabase.functions.invoke("admin-users", { body: { action, ...payload } });
+    if (error) throw error;
+    if (data?.error) throw new Error(data.error);
+    return data;
+}
+
+function setAdminUsersStatus(message, isError = false) {
+    const element = $("admin-users-status");
+    element.textContent = message;
+    element.classList.toggle("error", isError);
+}
+
+async function renderAdminUsers() {
+    const list = $("admin-users-list");
+    list.replaceChildren(createEmpty("Chargement des utilisateurs…"));
+    try {
+        const { users = [] } = await callAdminUsers("list");
+        list.replaceChildren();
+        if (!users.length) { list.append(createEmpty("Aucun utilisateur.")); return; }
+        users.forEach((user) => {
+            const row = document.createElement("div"); row.className = "admin-user-row";
+            const username = document.createElement("strong"); username.textContent = user.username;
+            const role = document.createElement("select");
+            ["user", "admin"].forEach((value) => { const option = document.createElement("option"); option.value = value; option.textContent = value === "admin" ? "Administrateur" : "Utilisateur"; option.selected = user.role === value; role.append(option); });
+            const save = document.createElement("button"); save.type = "button"; save.textContent = "Rôle";
+            save.addEventListener("click", async () => {
+                try {
+                    await callAdminUsers("update", { id: user.id, role: role.value });
+                    setAdminUsersStatus(`Rôle de ${user.username} mis à jour.`);
+                    if (user.id === currentUser?.id) await signOutCurrentUser("Votre rôle a changé. Reconnectez-vous pour obtenir les nouvelles permissions.");
+                    else await renderAdminUsers();
+                } catch (error) { console.error(error); setAdminUsersStatus("Impossible de modifier le rôle.", true); }
+            });
+            const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "Mot de passe";
+            reset.addEventListener("click", async () => {
+                const password = window.prompt(`Nouveau mot de passe pour ${user.username} (8 caractères minimum) :`);
+                if (password === null) return;
+                try { await callAdminUsers("reset-password", { id: user.id, password }); setAdminUsersStatus(`Mot de passe de ${user.username} réinitialisé.`); }
+                catch (error) { console.error(error); setAdminUsersStatus("Impossible de réinitialiser le mot de passe.", true); }
+            });
+            const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete"; remove.textContent = "Supprimer"; remove.disabled = user.id === currentUser?.id;
+            remove.addEventListener("click", async () => {
+                if (!window.confirm(`Supprimer définitivement l’utilisateur « ${user.username} » ?`)) return;
+                try { await callAdminUsers("delete", { id: user.id }); setAdminUsersStatus(`Utilisateur ${user.username} supprimé.`); await renderAdminUsers(); }
+                catch (error) { console.error(error); setAdminUsersStatus("Impossible de supprimer l’utilisateur.", true); }
+            });
+            row.append(username, role, save, reset, remove); list.append(row);
+        });
+    } catch (error) { console.error(error); list.replaceChildren(createEmpty("Impossible de charger les utilisateurs.")); setAdminUsersStatus("Accès administrateur requis.", true); }
+}
+
+async function signOutCurrentUser(message = "Connectez-vous pour accéder au tableau.") {
+    unsubscribeItems?.(); unsubscribeItems = null; items = []; render();
+    await firebaseSignOut(firebaseAuth); await supabase.auth.signOut();
+    setAuthenticatedUi(null); setStatus(message);
+}
+
 function setView(timeline) { btnTheme.classList.toggle("active", !timeline); btnTimeline.classList.toggle("active", timeline); viewThemes.classList.toggle("hidden", timeline); viewTimeline.classList.toggle("hidden", !timeline); }
 btnTheme.addEventListener("click", () => setView(false)); btnTimeline.addEventListener("click", () => setView(true)); $("btn-add").addEventListener("click", () => openForm());
+$("btn-admin-users").addEventListener("click", async () => {
+    if (!requireAdmin()) return;
+    $("admin-users-modal").classList.remove("hidden"); setAdminUsersStatus(""); await renderAdminUsers();
+});
+$("close-admin-users").addEventListener("click", () => $("admin-users-modal").classList.add("hidden"));
+$("admin-create-user-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!requireAdmin()) return;
+    const submit = $("admin-create-user-submit"); submit.disabled = true;
+    try {
+        await callAdminUsers("create", { username: normalizeUsername($("admin-new-username").value), password: $("admin-new-password").value, role: $("admin-new-role").value });
+        event.currentTarget.reset(); setAdminUsersStatus("Utilisateur créé."); await renderAdminUsers();
+    } catch (error) { console.error(error); setAdminUsersStatus("Impossible de créer l’utilisateur. Vérifiez l’identifiant et le mot de passe.", true); }
+    finally { submit.disabled = false; }
+});
 document.querySelectorAll('input[name="item-type"]').forEach((input) => input.addEventListener("change", toggleTypeFields));
 searchInput.addEventListener("input", render);
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
 $("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", () => readModal.classList.add("hidden"));
 $("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));
-window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) readModal.classList.add("hidden"); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); });
-window.addEventListener("keydown", (event) => { if (event.key === "Escape") { formModal.classList.add("hidden"); readModal.classList.add("hidden"); timelineFormModal.classList.add("hidden"); } });
+window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) readModal.classList.add("hidden"); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); if (event.target === $("admin-users-modal")) $("admin-users-modal").classList.add("hidden"); });
+window.addEventListener("keydown", (event) => { if (event.key === "Escape") { formModal.classList.add("hidden"); readModal.classList.add("hidden"); timelineFormModal.classList.add("hidden"); $("admin-users-modal").classList.add("hidden"); } });
 
 timelineScroll.addEventListener("mousedown", (event) => { isDragging = false; dragStartX = event.pageX - timelineScroll.offsetLeft; startScrollLeft = timelineScroll.scrollLeft; timelineScroll.classList.add("dragging"); });
 timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.classList.contains("dragging")) return; event.preventDefault(); const distance = (event.pageX - timelineScroll.offsetLeft) - dragStartX; if (Math.abs(distance) > 4) isDragging = true; timelineScroll.scrollLeft = startScrollLeft - distance; });

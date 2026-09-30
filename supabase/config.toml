@@ -2,3 +2,8 @@
 # handler can answer unauthenticated CORS preflight requests before any auth check.
 [functions.firebase-custom-token]
 verify_jwt = false
+
+# Called directly by the admin browser UI; it performs its own role check with
+# supabase.auth.getUser() and public.profiles before every operation.
+[functions.admin-users]
+verify_jwt = false

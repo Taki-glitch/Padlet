@@ -3,7 +3,9 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
     match /padletItems/{itemId} {
-      allow read, create, update, delete: if request.auth != null;
+      allow read: if request.auth != null;
+      allow create, update, delete: if request.auth != null
+        && request.auth.token.role == 'admin';
     }
   }
 }

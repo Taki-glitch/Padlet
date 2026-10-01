@@ -8,7 +8,11 @@ dans le bucket `documents`.
 
 La recherche est réalisée dans le navigateur sur les éléments déjà synchronisés :
 elle ignore la casse et les accents et couvre titre, résumé, tags, thème, contenu et
-description. Elle filtre aussi la frise. Le compteur additionne les tailles réelles
+description. Elle filtre aussi la frise. La barre d’outils propose des filtres par
+thème et tag construits depuis les documents chargés, ainsi qu’un tri des cartes par
+date ou titre. Les comparaisons de thèmes et tags ignorent casse, accents et espaces
+superflus, sans migration ni modification destructive des documents existants. La
+frise conserve toujours son ordre chronologique. Le compteur additionne les tailles réelles
 (`metadata.size`) des objets retournés par l'API Storage, y compris dans les dossiers.
 Il impose une limite de 50 Mio avant l'upload. La politique `select` du bucket est donc
 requise en plus des politiques déjà listées ci-dessous.

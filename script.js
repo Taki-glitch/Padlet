@@ -545,7 +545,9 @@ function openReadModal(item) {
 
 async function callAdminUsers(action, payload = {}) {
     if (!requireAdmin()) throw new Error("Accès administrateur requis.");
-    const { data, error } = await supabase.functions.invoke("admin-users", { body: { action, ...payload } });
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+    if (sessionError || !session || session.user.id !== currentUser?.id) throw new Error("Session Supabase invalide. Reconnectez-vous.");
+    const { data, error } = await supabase.functions.invoke("admin-users", { body: { action, ...payload }, headers: { Authorization: `Bearer ${session.access_token}` } });
     if (error) throw error;
     if (data?.error) throw new Error(data.error);
     return data;
@@ -593,7 +595,7 @@ async function renderAdminUsers() {
             });
             row.append(username, role, save, reset, remove); list.append(row);
         });
-    } catch (error) { console.error(error); list.replaceChildren(createEmpty("Impossible de charger les utilisateurs.")); setAdminUsersStatus("Accès administrateur requis.", true); }
+    } catch (error) { console.error(error); list.replaceChildren(createEmpty("Impossible de charger les utilisateurs.")); setAdminUsersStatus(error instanceof Error ? error.message : "Impossible de charger les utilisateurs.", true); }
 }
 
 async function signOutCurrentUser(message = "Connectez-vous pour accéder au tableau.") {
@@ -612,11 +614,12 @@ $("close-admin-users").addEventListener("click", () => $("admin-users-modal").cl
 $("admin-create-user-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!requireAdmin()) return;
+    const form = event.currentTarget;
     const submit = $("admin-create-user-submit"); submit.disabled = true;
     try {
         await callAdminUsers("create", { username: normalizeUsername($("admin-new-username").value), password: $("admin-new-password").value, role: $("admin-new-role").value });
-        event.currentTarget.reset(); setAdminUsersStatus("Utilisateur créé."); await renderAdminUsers();
-    } catch (error) { console.error(error); setAdminUsersStatus("Impossible de créer l’utilisateur. Vérifiez l’identifiant et le mot de passe.", true); }
+        form.reset(); setAdminUsersStatus("Utilisateur créé."); await renderAdminUsers();
+    } catch (error) { console.error(error); setAdminUsersStatus(error instanceof Error ? error.message : "Impossible de créer l’utilisateur. Vérifiez l’identifiant et le mot de passe.", true); }
     finally { submit.disabled = false; }
 });
 document.querySelectorAll('input[name="item-type"]').forEach((input) => input.addEventListener("change", toggleTypeFields));

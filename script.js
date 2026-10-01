@@ -38,6 +38,11 @@ const docForm = $("doc-form");
 const timelineForm = $("timeline-form");
 const status = $("app-status");
 const searchInput = $("document-search");
+const clearSearchButton = $("clear-search");
+const themeFilter = $("theme-filter");
+const tagFilter = $("tag-filter");
+const sortControl = $("sort-control");
+const resultsCount = $("results-count");
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
 let storageUsedBytes = null;
 let unsubscribeItems = null;
@@ -147,6 +152,40 @@ function normalizeSearchText(value = "") {
     return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("fr-FR");
 }
 
+function normalizeOrganizationValue(value = "") {
+    return normalizeSearchText(value).replace(/\s+/g, " ").trim();
+}
+
+function displayTheme(value = "") { return String(value).trim().replace(/\s+/g, " "); }
+
+function documentItems() { return items.filter((item) => item.type === "document"); }
+
+function organizationOptions(values, formatter = (value) => value) {
+    const options = new Map();
+    values.forEach((value) => {
+        const label = formatter(value);
+        const key = normalizeOrganizationValue(label);
+        if (key && !options.has(key)) options.set(key, label);
+    });
+    return [...options.entries()].sort(([, a], [, b]) => a.localeCompare(b, "fr"));
+}
+
+function updateSelectOptions(select, options) {
+    const selected = select.value;
+    select.replaceChildren(new Option("Tous", ""), ...options.map(([value, label]) => new Option(label, value)));
+    select.value = options.some(([value]) => value === selected) ? selected : "";
+}
+
+function updateOrganizationControls() {
+    const documents = documentItems();
+    const themes = organizationOptions(documents.map((item) => item.theme), displayTheme);
+    const tags = organizationOptions(documents.flatMap((item) => formatTags(item.tags)));
+    updateSelectOptions(themeFilter, themes);
+    updateSelectOptions(tagFilter, tags);
+    const themeList = $("existing-themes");
+    themeList.replaceChildren(...themes.map(([, label]) => new Option(label, label)));
+}
+
 function appendInlineMarkdown(container, value) {
     const pattern = /(\*\*|__)(.+?)\1|(\*|_)(.+?)\3|\[([^\]]+)\]\(([^\s)]+)\)/g;
     let lastIndex = 0;
@@ -228,10 +267,12 @@ function renderMarkdownSummary(container, value) {
 
 function filteredItems() {
     const terms = normalizeSearchText(searchInput.value).trim().split(/\s+/).filter(Boolean);
-    if (!terms.length) return items;
     return items.filter((item) => {
         const haystack = normalizeSearchText([item.title, item.summary, item.description, item.tags, item.theme, item.content].filter(Boolean).join(" "));
-        return terms.every((term) => haystack.includes(term));
+        const matchesSearch = terms.every((term) => haystack.includes(term));
+        const matchesTheme = !themeFilter.value || normalizeOrganizationValue(item.theme) === themeFilter.value;
+        const matchesTag = !tagFilter.value || formatTags(item.tags).some((tag) => normalizeOrganizationValue(tag) === tagFilter.value);
+        return matchesSearch && matchesTheme && matchesTag;
     });
 }
 
@@ -311,21 +352,40 @@ function createStorageFilePath(id, fileName) {
     return `${id}/${Date.now()}-${randomId}-${safeName}`;
 }
 
-function render() { renderThemes(); renderTimeline(); }
+function render() {
+    updateOrganizationControls();
+    clearSearchButton.classList.toggle("hidden", !searchInput.value);
+    renderResultsCount();
+    renderThemes();
+    renderTimeline();
+}
+
+function renderResultsCount() {
+    const count = filteredItems().filter((item) => item.type === "document").length;
+    const hasSearch = Boolean(searchInput.value.trim());
+    const hasFilters = Boolean(themeFilter.value || tagFilter.value);
+    if (!count && (hasSearch || hasFilters)) resultsCount.textContent = "Aucun document ne correspond à vos critères.";
+    else if (hasSearch) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à votre recherche`;
+    else if (hasFilters) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à vos filtres`;
+    else resultsCount.textContent = `${count} document${count > 1 ? "s" : ""}`;
+}
 
 function renderThemes() {
     viewThemes.replaceChildren();
     const documents = filteredItems().filter((item) => item.type === "document");
     if (!documents.length) {
-        viewThemes.append(createEmpty(searchInput.value.trim() ? "Aucun document ne correspond à votre recherche." : "Aucun document pour le moment. Ajoutez-en un pour commencer."));
+        viewThemes.append(createEmpty(searchInput.value.trim() || themeFilter.value || tagFilter.value ? "Aucun document ne correspond à vos critères." : "Aucun document pour le moment. Ajoutez-en un pour commencer."));
         return;
     }
     const themes = new Map();
     documents.forEach((item) => {
-        const theme = item.theme || "Sans thème";
-        themes.set(theme, [...(themes.get(theme) || []), item]);
+        const theme = displayTheme(item.theme) || "Sans thème";
+        const key = normalizeOrganizationValue(theme) || "__sans-theme__";
+        const entry = themes.get(key) || { theme, docs: [] };
+        entry.docs.push(item);
+        themes.set(key, entry);
     });
-    [...themes.entries()].sort(([a], [b]) => a.localeCompare(b, "fr")).forEach(([theme, docs]) => {
+    [...themes.values()].sort((a, b) => a.theme.localeCompare(b.theme, "fr")).forEach(({ theme, docs }) => {
         const column = document.createElement("article");
         column.className = "theme-column";
         const heading = document.createElement("h3");
@@ -333,13 +393,24 @@ function renderThemes() {
         const count = document.createElement("small");
         count.textContent = ` (${docs.length})`;
         heading.append(count);
-        column.append(heading, ...docs.sort(sortByDate).map(createDocumentCard));
+        column.append(heading, ...sortDocuments(docs).map(createDocumentCard));
         viewThemes.append(column);
     });
 }
 
 function createEmpty(message) { const el = document.createElement("p"); el.className = "empty-state"; el.textContent = message; return el; }
 function sortByDate(a, b) { return new Date(a.date) - new Date(b.date); }
+
+function sortDocuments(documents) {
+    const byTitle = (a, b) => String(a.title || "").localeCompare(String(b.title || ""), "fr", { sensitivity: "base" });
+    const comparators = {
+        "date-desc": (a, b) => sortByDate(b, a),
+        "date-asc": sortByDate,
+        "title-asc": byTitle,
+        "title-desc": (a, b) => byTitle(b, a)
+    };
+    return [...documents].sort(comparators[sortControl.value] || comparators["date-desc"]);
+}
 
 function timelineDate(item) { return item.timelineDate || item.date; }
 function timelineTitle(item) { return item.timelineTitle || item.title; }
@@ -353,10 +424,35 @@ function createDocumentCard(item) {
     const title = document.createElement("h4"); title.textContent = item.title;
     const date = document.createElement("p"); date.className = "card-date"; date.textContent = dateLabel(item.date);
     const summary = document.createElement("div"); summary.className = "doc-summary-preview"; renderMarkdownSummary(summary, item.summary || "Sans résumé");
+    const tags = createTagButtons(item.tags);
     const actions = createActions(item);
-    card.append(title, date, summary, actions);
+    card.append(title, date, summary);
+    if (tags.childElementCount) card.append(tags);
+    card.append(actions);
     card.addEventListener("click", () => openReadModal(item));
     return card;
+}
+
+function applyTagFilter(tag) {
+    tagFilter.value = normalizeOrganizationValue(tag);
+    readModal.classList.add("hidden");
+    setView(false);
+    render();
+}
+
+function createTagButtons(tagsValue) {
+    const container = document.createElement("div");
+    container.className = "tags-container card-tags";
+    formatTags(tagsValue).forEach((tag) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "tag tag-button";
+        button.textContent = tag;
+        button.title = `Filtrer par « ${tag} »`;
+        button.addEventListener("click", (event) => { event.stopPropagation(); applyTagFilter(tag); });
+        container.append(button);
+    });
+    return container;
 }
 
 function createActions(item) {
@@ -434,6 +530,14 @@ function openForm(item = null) {
     toggleTypeFields(); updateExpirationPreview(); formModal.classList.remove("hidden"); $("doc-title").focus();
 }
 
+function canonicalTheme(value) {
+    const entered = displayTheme(value);
+    if (!entered) return "";
+    const existing = organizationOptions(documentItems().map((item) => item.theme), displayTheme)
+        .find(([key]) => key === normalizeOrganizationValue(entered));
+    return existing ? existing[1] : entered;
+}
+
 async function uploadSelectedFile(id) {
     const file = $("doc-file").files[0];
     if (!file) return { fileUrl: $("existing-file-url").value, filePath: $("existing-file-path").value, fileName: $("existing-file-name").value, fileType: $("existing-file-type").value };
@@ -476,7 +580,7 @@ docForm.addEventListener("submit", async (event) => {
         const expiresAt = addMonthsToDate($("doc-date").value, retentionMonths);
         if (type === "document" && retentionMonths && !expiresAt) throw new Error("La date d’expiration est invalide. Vérifiez la date et la durée de conservation.");
         const item = type === "document"
-            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: $("doc-theme").value.trim(), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths: retentionMonths || null, expiresAt, ...file }
+            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: canonicalTheme($("doc-theme").value), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths: retentionMonths || null, expiresAt, ...file }
             : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim() };
         await setDoc(doc(db, "padletItems", id), item);
         if (type === "deadline" || (file.filePath && file.filePath !== oldFilePath)) await removeSupabaseFile(oldFilePath);
@@ -534,7 +638,10 @@ function openReadModal(item) {
     else renderMarkdownSummary(summary, item.summary);
     $("read-content").textContent = item.type === "document" ? (item.content || "") : "";
     const tags = $("read-tags"); tags.replaceChildren();
-    if (item.type === "document") formatTags(item.tags).forEach((tag) => { const el = document.createElement("span"); el.className = "tag"; el.textContent = tag; tags.append(el); });
+    if (item.type === "document") {
+        const tagButtons = createTagButtons(item.tags);
+        if (tagButtons.childElementCount) tags.append(tagButtons);
+    }
     const preview = $("read-file"); preview.replaceChildren();
     if (item.fileUrl) {
         if ((item.fileType || "").startsWith("image/")) { const image = document.createElement("img"); image.src = item.fileUrl; image.alt = `Aperçu : ${item.title}`; preview.append(image); }
@@ -624,6 +731,8 @@ $("admin-create-user-form").addEventListener("submit", async (event) => {
 });
 document.querySelectorAll('input[name="item-type"]').forEach((input) => input.addEventListener("change", toggleTypeFields));
 searchInput.addEventListener("input", render);
+clearSearchButton.addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); render(); });
+[themeFilter, tagFilter, sortControl].forEach((control) => control.addEventListener("change", render));
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
 $("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", () => readModal.classList.add("hidden"));
 $("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));

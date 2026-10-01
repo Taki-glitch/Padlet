@@ -6,16 +6,35 @@ const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
 const domain = "auth.padlet.invalid";
 const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type", "Access-Control-Allow-Methods": "POST, OPTIONS" };
 const validUsername = (username: unknown) => typeof username === "string" && /^[a-z0-9][a-z0-9._-]{2,31}$/.test(username);
+const diagnosticError = (error: unknown) => {
+  if (!error || typeof error !== "object") return null;
+  const { name, message, code, status } = error as { name?: unknown; message?: unknown; code?: unknown; status?: unknown };
+  return { name, message, code, status };
+};
 
 Deno.serve(async (request) => {
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
     const authorization = request.headers.get("Authorization");
+    console.info("admin-users authorization header diagnostic", { authorizationPresent: Boolean(authorization) });
     if (!url || !anonKey || !serviceRoleKey || !authorization?.startsWith("Bearer ")) throw new Error("Non authentifié");
     const callerClient = createClient(url, anonKey, { global: { headers: { Authorization: authorization } } });
-    const { data: { user: caller } } = await callerClient.auth.getUser();
+    const { data: { user: caller }, error: callerError } = await callerClient.auth.getUser();
     const admin = createClient(url, serviceRoleKey);
-    const { data: profile } = caller ? await admin.from("profiles").select("role").eq("id", caller.id).maybeSingle() : { data: null };
+    const { data: profile, error: profileError } = caller ? await admin.from("profiles").select("id, username, role").eq("id", caller.id).maybeSingle() : { data: null, error: null };
+    console.info("admin-users authorization diagnostic", {
+      authorizationPresent: Boolean(authorization),
+      callerId: caller?.id ?? null,
+      callerEmail: caller?.email ?? null,
+      profileFound: Boolean(profile),
+      profileId: profile?.id ?? null,
+      profileUsername: profile?.username ?? null,
+      profileRole: profile?.role ?? null,
+      authGetUserError: diagnosticError(callerError),
+      profileQueryError: diagnosticError(profileError),
+    });
+    if (callerError) console.error("admin-users auth.getUser diagnostic error", diagnosticError(callerError));
+    if (profileError) console.error("admin-users profiles query diagnostic error", diagnosticError(profileError));
     if (!caller || profile?.role !== "admin") return new Response(JSON.stringify({ error: "Accès administrateur requis" }), { status: 403, headers: corsHeaders });
     const body = await request.json();
     if (body.action === "list") { const { data, error } = await admin.from("profiles").select("id, username, role, created_at").order("username"); if (error) throw error; return Response.json({ users: data }, { headers: corsHeaders }); }

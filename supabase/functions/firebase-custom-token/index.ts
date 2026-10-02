@@ -16,8 +16,9 @@ async function createFirebaseCustomToken(uid: string, role: "admin" | "user") {
   if (!firebaseClientEmail || !firebasePrivateKey) throw new Error("Secrets Firebase incomplets.");
   const now = Math.floor(Date.now() / 1000);
   const header = base64Url(JSON.stringify({ alg: "RS256", typ: "JWT" }));
-  // Firebase copies non-reserved top-level custom-token claims into request.auth.token.
-  const payload = base64Url(JSON.stringify({ iss: firebaseClientEmail, sub: firebaseClientEmail, aud: "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit", iat: now, exp: now + 3600, uid, role }));
+  // Firebase only propagates custom-token claims nested under `claims` to the
+  // Firebase ID token used by Firestore Security Rules.
+  const payload = base64Url(JSON.stringify({ iss: firebaseClientEmail, sub: firebaseClientEmail, aud: "https://identitytoolkit.googleapis.com/google.identity.identitytoolkit.v1.IdentityToolkit", iat: now, exp: now + 3600, uid, claims: { role } }));
   const der = Uint8Array.from(atob(firebasePrivateKey.replace(/-----(BEGIN|END) PRIVATE KEY-----|\s/g, "")), char => char.charCodeAt(0));
   const key = await crypto.subtle.importKey("pkcs8", der.buffer, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
   const signature = await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, new TextEncoder().encode(`${header}.${payload}`));
@@ -36,6 +37,6 @@ Deno.serve(async (request) => {
     const { data: profile, error: profileError } = await client.from("profiles").select("role").eq("id", user.id).maybeSingle();
     const role = profile?.role;
     if (profileError || (role !== "admin" && role !== "user")) return new Response(JSON.stringify({ error: "Profil applicatif introuvable" }), { status: 403, headers: corsHeaders });
-    return Response.json({ token: await createFirebaseCustomToken(user.id, role) }, { headers: corsHeaders });
+    return Response.json({ token: await createFirebaseCustomToken(user.id, role), uid: user.id, role }, { headers: corsHeaders });
   } catch (error) { console.error("Firebase custom token impossible", error); return new Response(JSON.stringify({ error: "Jeton Firebase indisponible" }), { status: 500, headers: corsHeaders }); }
 });

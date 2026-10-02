@@ -10,7 +10,7 @@ const firebaseConfig = {
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
-import { getAuth, signInWithCustomToken, signOut as firebaseSignOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import { getAuth, getIdTokenResult, signInWithCustomToken, signOut as firebaseSignOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase-config.js";
 
@@ -48,6 +48,8 @@ let storageUsedBytes = null;
 let unsubscribeItems = null;
 let currentUser = null;
 let currentProfile = null;
+let firebaseSessionUserId = null;
+let firebaseSessionRole = null;
 
 // Supabase utilise une adresse technique non distribuable. L'utilisateur ne saisit
 // jamais cette adresse : elle est reconstruite ici avec la même convention que les
@@ -97,13 +99,44 @@ function requireAdmin() {
     return false;
 }
 
-async function startFirestoreSession() {
+async function refreshAdminFirestoreSession() {
+    const { data: { session }, error } = await supabase.auth.getSession();
+    if (error || !session || session.user.id !== currentUser?.id) throw new Error("Session Supabase invalide. Reconnectez-vous.");
+    const profile = await loadCurrentProfile(session.user);
+    currentProfile = profile;
+    if (!isAdmin()) {
+        applyRoleUi();
+        throw new Error("Cette action est réservée aux administrateurs.");
+    }
+    // Reissue the Firebase token before a mutation so a role change cannot leave
+    // an administrator with a stale Firebase claim (or vice versa).
+    await startFirestoreSession(session);
+    if (firebaseSessionUserId !== session.user.id || firebaseSessionRole !== "admin") {
+        throw new Error("Session Firebase administrateur invalide. Reconnectez-vous.");
+    }
+}
+
+async function startFirestoreSession(session) {
+    if (!session?.access_token || session.user.id !== currentUser?.id) throw new Error("Session Supabase invalide. Reconnectez-vous.");
     setStatus("Connexion sécurisée à Firestore…");
-    const { data, error } = await supabase.functions.invoke("firebase-custom-token");
+    // Do not rely on the SDK's cached authorization header: the custom token must
+    // be minted from the Supabase session that just supplied the current profile.
+    const { data, error } = await supabase.functions.invoke("firebase-custom-token", {
+        headers: { Authorization: `Bearer ${session.access_token}` }
+    });
     if (error) throw error;
     if (!data?.token) throw new Error("La fonction Firebase n'a pas retourné de jeton.");
-    await signInWithCustomToken(firebaseAuth, data.token);
     unsubscribeItems?.();
+    unsubscribeItems = null;
+    await firebaseSignOut(firebaseAuth);
+    const credential = await signInWithCustomToken(firebaseAuth, data.token);
+    const token = await getIdTokenResult(credential.user, true);
+    if (credential.user.uid !== session.user.id || token.claims.role !== currentProfile?.role) {
+        await firebaseSignOut(firebaseAuth);
+        throw new Error("Le jeton Firebase ne correspond pas au rôle Supabase actuel.");
+    }
+    firebaseSessionUserId = credential.user.uid;
+    firebaseSessionRole = token.claims.role;
     unsubscribeItems = onSnapshot(itemsCollection,
         (snapshot) => { items = snapshot.docs.map((item) => item.data()); render(); setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`); },
         (error) => { console.error(error); setStatus("Connexion Firestore impossible. Vérifiez votre session Firebase et vos règles Firestore.", true); });
@@ -116,7 +149,7 @@ async function initialiseAuthentication() {
     if (!session) { setAuthenticatedUi(null); setStatus("Connectez-vous pour accéder au tableau."); return; }
     try {
         setAuthenticatedUi(session.user, await loadCurrentProfile(session.user));
-        await startFirestoreSession();
+        await startFirestoreSession(session);
     }
     catch (error) { console.error(error); setStatus("La connexion Firebase sécurisée a échoué. Contactez un administrateur.", true); }
 }
@@ -132,7 +165,8 @@ $("auth-form").addEventListener("submit", async (event) => {
         const { data, error } = await supabase.auth.signInWithPassword({ email: technicalEmail(username), password });
         if (error) throw error;
         setAuthenticatedUi(data.user, await loadCurrentProfile(data.user));
-        await startFirestoreSession();
+        const { data: { session } } = await supabase.auth.getSession();
+        await startFirestoreSession(session);
     } catch (error) { console.error(error); $("auth-error").textContent = "Identifiant ou mot de passe incorrect, ou connexion indisponible."; }
     finally { submit.disabled = false; }
 });
@@ -573,6 +607,7 @@ docForm.addEventListener("submit", async (event) => {
     const submit = $("submit-item"); submit.disabled = true; submit.textContent = "Enregistrement…";
     let uploadedFilePath = "";
     try {
+        await refreshAdminFirestoreSession();
         const file = type === "document" ? await uploadSelectedFile(id) : { fileUrl: "", filePath: "", fileName: "", fileType: "" };
         uploadedFilePath = $("doc-file").files[0] ? file.filePath : "";
         const oldFilePath = $("existing-file-path").value;
@@ -605,6 +640,7 @@ timelineForm.addEventListener("submit", async (event) => {
     const title = $("timeline-title").value.trim();
     const content = $("timeline-content").value.trim();
     try {
+        await refreshAdminFirestoreSession();
         await setDoc(doc(db, "padletItems", id), {
             timelineDate: date === item.date ? "" : date,
             timelineTitle: title === item.title ? "" : title,
@@ -623,6 +659,7 @@ async function removeItem(item) {
     if (!requireAdmin()) return;
     if (!window.confirm(`Supprimer « ${item.title} » ?`)) return;
     try {
+        await refreshAdminFirestoreSession();
         await removeSupabaseFile(item.filePath, true);
         await deleteDoc(doc(db, "padletItems", item.id));
         setStatus("Élément supprimé."); await refreshStorageUsage();
@@ -707,6 +744,7 @@ async function renderAdminUsers() {
 
 async function signOutCurrentUser(message = "Connectez-vous pour accéder au tableau.") {
     unsubscribeItems?.(); unsubscribeItems = null; items = []; render();
+    firebaseSessionUserId = null; firebaseSessionRole = null;
     await firebaseSignOut(firebaseAuth); await supabase.auth.signOut();
     setAuthenticatedUi(null); setStatus(message);
 }

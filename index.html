@@ -16,8 +16,9 @@
             <span id="auth-user" class="auth-user hidden" aria-live="polite"></span>
             <button id="btn-sign-out" class="hidden" type="button">Se déconnecter</button>
             <button id="btn-admin-users" class="hidden" type="button">Utilisateurs</button>
-            <button id="btn-theme" class="active" type="button">Vue par thèmes</button>
+            <button id="btn-theme" class="active" type="button">Documents</button>
             <button id="btn-timeline" type="button">Frise chronologique</button>
+            <button id="btn-dashboard" type="button">Tableau de bord</button>
             <button id="btn-add" class="btn-primary" type="button">+ Ajouter</button>
         </nav>
     </header>
@@ -35,6 +36,9 @@
                 </label>
                 <label class="filter-control">Tag
                     <select id="tag-filter" aria-label="Filtrer par tag"><option value="">Tous</option></select>
+                </label>
+                <label class="filter-control">Favoris
+                    <select id="favorite-filter" aria-label="Filtrer par favoris"><option value="">Tous</option><option value="favorites">Favoris</option></select>
                 </label>
                 <label class="filter-control">Trier par
                     <select id="sort-control" aria-label="Trier les documents">
@@ -58,6 +62,13 @@
             <div class="timeline-help">Cliquez-glissez sur la frise pour parcourir le temps.</div>
             <div id="timeline-scroll" class="timeline-scroll" aria-label="Frise défilable horizontalement">
                 <div id="timeline-container" class="timeline-container"></div>
+            </div>
+        </section>
+        <section id="view-dashboard" class="view dashboard hidden" aria-label="Tableau de bord">
+            <div id="dashboard-metrics" class="dashboard-metrics"></div>
+            <div class="dashboard-columns">
+                <article class="dashboard-panel"><h2>Prochaines échéances</h2><div id="dashboard-expirations"></div></article>
+                <article class="dashboard-panel"><h2>Derniers documents ajoutés</h2><div id="dashboard-recent"></div></article>
             </div>
         </section>
     </main>

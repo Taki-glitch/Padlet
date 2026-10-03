@@ -27,8 +27,10 @@ let startScrollLeft = 0;
 const $ = (id) => document.getElementById(id);
 const btnTheme = $("btn-theme");
 const btnTimeline = $("btn-timeline");
+const btnDashboard = $("btn-dashboard");
 const viewThemes = $("view-themes");
 const viewTimeline = $("view-timeline");
+const viewDashboard = $("view-dashboard");
 const timelineContainer = $("timeline-container");
 const timelineScroll = $("timeline-scroll");
 const formModal = $("form-modal");
@@ -41,6 +43,7 @@ const searchInput = $("document-search");
 const clearSearchButton = $("clear-search");
 const themeFilter = $("theme-filter");
 const tagFilter = $("tag-filter");
+const favoriteFilter = $("favorite-filter");
 const sortControl = $("sort-control");
 const resultsCount = $("results-count");
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -67,6 +70,25 @@ function setStatus(message, isError = false) {
 }
 
 function isAdmin() { return currentProfile?.role === "admin"; }
+
+function favoritesStorageKey() { return currentUser?.id ? `padlet-favorites:${currentUser.id}` : ""; }
+function favoriteIds() {
+    const key = favoritesStorageKey();
+    if (!key) return new Set();
+    try {
+        const stored = JSON.parse(localStorage.getItem(key) || "[]");
+        return new Set(Array.isArray(stored) ? stored.filter((id) => typeof id === "string") : []);
+    } catch { return new Set(); }
+}
+function isFavorite(item) { return favoriteIds().has(item.id); }
+function toggleFavorite(item) {
+    const key = favoritesStorageKey();
+    if (!key || !item?.id) return;
+    const ids = favoriteIds();
+    ids.has(item.id) ? ids.delete(item.id) : ids.add(item.id);
+    localStorage.setItem(key, JSON.stringify([...ids]));
+    render();
+}
 
 function applyRoleUi() {
     $("btn-add").classList.toggle("hidden", !isAdmin());
@@ -313,7 +335,8 @@ function filteredItems() {
         const matchesSearch = terms.every((term) => haystack.includes(term));
         const matchesTheme = !themeFilter.value || normalizeOrganizationValue(item.theme) === themeFilter.value;
         const matchesTag = !tagFilter.value || formatTags(item.tags).some((tag) => normalizeOrganizationValue(tag) === tagFilter.value);
-        return matchesSearch && matchesTheme && matchesTag;
+        const matchesFavorite = favoriteFilter.value !== "favorites" || (item.type === "document" && isFavorite(item));
+        return matchesSearch && matchesTheme && matchesTag && matchesFavorite;
     });
 }
 
@@ -378,10 +401,12 @@ async function refreshStorageUsage() {
         const files = await listStorageFiles();
         storageUsedBytes = files.reduce((total, file) => total + Number(file.metadata?.size || 0), 0);
         updateStorageIndicator(storageUsedBytes);
+        renderDashboard();
     } catch (error) {
         console.error("Calcul du stockage impossible.", error);
         storageUsedBytes = null;
         updateStorageIndicator(null, "Indisponible");
+        renderDashboard();
     }
 }
 
@@ -399,12 +424,13 @@ function render() {
     renderResultsCount();
     renderThemes();
     renderTimeline();
+    renderDashboard();
 }
 
 function renderResultsCount() {
     const count = filteredItems().filter((item) => item.type === "document").length;
     const hasSearch = Boolean(searchInput.value.trim());
-    const hasFilters = Boolean(themeFilter.value || tagFilter.value);
+    const hasFilters = Boolean(themeFilter.value || tagFilter.value || favoriteFilter.value);
     if (!count && (hasSearch || hasFilters)) resultsCount.textContent = "Aucun document ne correspond à vos critères.";
     else if (hasSearch) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à votre recherche`;
     else if (hasFilters) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à vos filtres`;
@@ -415,7 +441,7 @@ function renderThemes() {
     viewThemes.replaceChildren();
     const documents = filteredItems().filter((item) => item.type === "document");
     if (!documents.length) {
-        viewThemes.append(createEmpty(searchInput.value.trim() || themeFilter.value || tagFilter.value ? "Aucun document ne correspond à vos critères." : "Aucun document pour le moment. Ajoutez-en un pour commencer."));
+        viewThemes.append(createEmpty(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value ? "Aucun document ne correspond à vos critères." : "Aucun document pour le moment. Ajoutez-en un pour commencer."));
         return;
     }
     const themes = new Map();
@@ -437,6 +463,58 @@ function renderThemes() {
         column.append(heading, ...sortDocuments(docs).map(createDocumentCard));
         viewThemes.append(column);
     });
+}
+
+function expirationDate(item) {
+    if (item.type !== "document") return "";
+    return item.expiresAt || addMonthsToDate(item.date, Number(item.retentionMonths));
+}
+function daysUntil(dateValue) {
+    if (!dateValue) return null;
+    const target = new Date(`${dateValue}T00:00:00`);
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (Number.isNaN(target.getTime())) return null;
+    return Math.round((target - today) / 86400000);
+}
+function expirationLabel(item) {
+    const days = daysUntil(expirationDate(item));
+    if (days === null || days < 0 || days > 30) return "";
+    if (days === 0) return "Expire aujourd'hui";
+    if (days === 1) return "Expire demain";
+    return `Expire dans ${days} jours`;
+}
+function dashboardMetric(label, value) {
+    const metric = document.createElement("article"); metric.className = "dashboard-metric";
+    const name = document.createElement("span"); name.textContent = label;
+    const amount = document.createElement("strong"); amount.textContent = value;
+    metric.append(name, amount); return metric;
+}
+function renderDashboardList(container, entries, emptyMessage, detail) {
+    container.replaceChildren();
+    if (!entries.length) { container.append(createEmpty(emptyMessage)); return; }
+    const list = document.createElement("div"); list.className = "dashboard-list";
+    entries.forEach((item) => {
+        const row = document.createElement("div"); row.className = "dashboard-list-item";
+        const title = document.createElement("strong"); title.textContent = item.title || "Sans titre";
+        const info = document.createElement("small"); info.textContent = detail(item);
+        row.append(title, info); list.append(row);
+    });
+    container.append(list);
+}
+function renderDashboard() {
+    const documents = documentItems();
+    const remaining = Number.isFinite(storageUsedBytes) ? Math.max(0, STORAGE_LIMIT_BYTES - storageUsedBytes) : null;
+    $("dashboard-metrics").replaceChildren(
+        dashboardMetric("Documents", String(documents.length)),
+        dashboardMetric("Éléments de la frise", String(items.length)),
+        dashboardMetric("Espace utilisé", Number.isFinite(storageUsedBytes) ? formatMegabytes(storageUsedBytes) : "Indisponible"),
+        dashboardMetric("Espace restant", remaining === null ? "Indisponible" : formatMegabytes(remaining))
+    );
+    const upcoming = documents.filter((item) => { const days = daysUntil(expirationDate(item)); return days !== null && days >= 0 && days <= 30; })
+        .sort((a, b) => expirationDate(a).localeCompare(expirationDate(b)));
+    renderDashboardList($("dashboard-expirations"), upcoming, "Aucune échéance dans les 30 prochains jours.", (item) => `${expirationLabel(item)} · ${dateLabel(expirationDate(item))}`);
+    const recent = [...documents].sort((a, b) => String(b.publishedAt || b.date || "").localeCompare(String(a.publishedAt || a.date || ""))).slice(0, 5);
+    renderDashboardList($("dashboard-recent"), recent, "Aucun document pour le moment.", (item) => `Ajouté le ${dateLabel(item.publishedAt || item.date)}`);
 }
 
 function createEmpty(message) { const el = document.createElement("p"); el.className = "empty-state"; el.textContent = message; return el; }
@@ -462,12 +540,22 @@ function sortTimelineByDate(a, b) { return new Date(timelineDate(a)) - new Date(
 function createDocumentCard(item) {
     const card = document.createElement("article");
     card.className = "doc-card";
+    const header = document.createElement("div"); header.className = "doc-card-header";
     const title = document.createElement("h4"); title.textContent = item.title;
+    const favorite = document.createElement("button"); favorite.type = "button"; favorite.className = `favorite-button${isFavorite(item) ? " is-favorite" : ""}`;
+    favorite.textContent = isFavorite(item) ? "★" : "☆";
+    favorite.setAttribute("aria-label", isFavorite(item) ? "Retirer des favoris" : "Ajouter aux favoris");
+    favorite.title = favorite.getAttribute("aria-label");
+    favorite.addEventListener("click", (event) => { event.stopPropagation(); toggleFavorite(item); });
+    header.append(title, favorite);
     const date = document.createElement("p"); date.className = "card-date"; date.textContent = dateLabel(item.date);
+    const expiration = expirationLabel(item);
     const summary = document.createElement("div"); summary.className = "doc-summary-preview"; renderMarkdownSummary(summary, item.summary || "Sans résumé");
     const tags = createTagButtons(item.tags);
     const actions = createActions(item);
-    card.append(title, date, summary);
+    card.append(header, date);
+    if (expiration) { const notice = document.createElement("p"); notice.className = "card-expiration"; notice.textContent = expiration; card.append(notice); }
+    card.append(summary);
     if (tags.childElementCount) card.append(tags);
     card.append(actions);
     card.addEventListener("click", () => openReadModal(item));
@@ -756,8 +844,12 @@ async function signOutCurrentUser(message = "Connectez-vous pour accéder au tab
     setAuthenticatedUi(null); setStatus(message);
 }
 
-function setView(timeline) { btnTheme.classList.toggle("active", !timeline); btnTimeline.classList.toggle("active", timeline); viewThemes.classList.toggle("hidden", timeline); viewTimeline.classList.toggle("hidden", !timeline); }
-btnTheme.addEventListener("click", () => setView(false)); btnTimeline.addEventListener("click", () => setView(true)); $("btn-add").addEventListener("click", () => openForm());
+function setView(view) {
+    const selected = view === true ? "timeline" : view === "dashboard" ? "dashboard" : "themes";
+    btnTheme.classList.toggle("active", selected === "themes"); btnTimeline.classList.toggle("active", selected === "timeline"); btnDashboard.classList.toggle("active", selected === "dashboard");
+    viewThemes.classList.toggle("hidden", selected !== "themes"); viewTimeline.classList.toggle("hidden", selected !== "timeline"); viewDashboard.classList.toggle("hidden", selected !== "dashboard");
+}
+btnTheme.addEventListener("click", () => setView("themes")); btnTimeline.addEventListener("click", () => setView("timeline")); btnDashboard.addEventListener("click", () => setView("dashboard")); $("btn-add").addEventListener("click", () => openForm());
 $("btn-admin-users").addEventListener("click", async () => {
     if (!requireAdmin()) return;
     $("admin-users-modal").classList.remove("hidden"); setAdminUsersStatus(""); await renderAdminUsers();
@@ -777,7 +869,7 @@ $("admin-create-user-form").addEventListener("submit", async (event) => {
 document.querySelectorAll('input[name="item-type"]').forEach((input) => input.addEventListener("change", toggleTypeFields));
 searchInput.addEventListener("input", render);
 clearSearchButton.addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); render(); });
-[themeFilter, tagFilter, sortControl].forEach((control) => control.addEventListener("change", render));
+[themeFilter, tagFilter, favoriteFilter, sortControl].forEach((control) => control.addEventListener("change", render));
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
 $("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", () => readModal.classList.add("hidden"));
 $("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));

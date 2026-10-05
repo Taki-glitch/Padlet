@@ -845,11 +845,23 @@ async function signOutCurrentUser(message = "Connectez-vous pour accéder au tab
 }
 
 function setView(view) {
-    const selected = view === true ? "timeline" : view === "dashboard" ? "dashboard" : "themes";
-    btnTheme.classList.toggle("active", selected === "themes"); btnTimeline.classList.toggle("active", selected === "timeline"); btnDashboard.classList.toggle("active", selected === "dashboard");
-    viewThemes.classList.toggle("hidden", selected !== "themes"); viewTimeline.classList.toggle("hidden", selected !== "timeline"); viewDashboard.classList.toggle("hidden", selected !== "dashboard");
+    const selected = view === "timeline"
+        ? "timeline"
+        : view === "dashboard"
+            ? "dashboard"
+            : "themes";
+
+    btnTheme.classList.toggle("active", selected === "themes");
+    btnTimeline.classList.toggle("active", selected === "timeline");
+    btnDashboard.classList.toggle("active", selected === "dashboard");
+
+    viewThemes.classList.toggle("hidden", selected !== "themes");
+    viewTimeline.classList.toggle("hidden", selected !== "timeline");
+    viewDashboard.classList.toggle("hidden", selected !== "dashboard");
+
     if (selected === "timeline") renderTimeline();
 }
+
 btnTheme.addEventListener("click", () => setView("themes")); btnTimeline.addEventListener("click", () => setView("timeline")); btnDashboard.addEventListener("click", () => setView("dashboard")); $("btn-add").addEventListener("click", () => openForm());
 $("btn-admin-users").addEventListener("click", async () => {
     if (!requireAdmin()) return;

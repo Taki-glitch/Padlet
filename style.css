@@ -52,3 +52,28 @@ form { display:flex; flex-direction:column; gap:.85rem; } form label { display:f
     .doc-list-row .card-tags { grid-column:1 / -1; }
     .doc-list-row .doc-actions { grid-column:1 / -1; }
 }
+.select-mode-toggle { padding:.45rem .7rem; border:1px solid #cbd5e1; border-radius:7px; background:var(--card-bg); color:var(--text); cursor:pointer; font-size:.82rem; font-weight:700; }
+.select-mode-toggle[aria-pressed="true"] { border-color:var(--primary); color:var(--primary); background:var(--primary-soft); }
+.filter-summary, .selection-toolbar { display:flex; align-items:center; justify-content:space-between; gap:.75rem; margin:.25rem 0 .8rem; padding:.65rem .8rem; border:1px solid #dbe2ea; border-radius:8px; background:var(--card-bg); }
+.filter-summary > button, .selection-actions button { padding:.4rem .65rem; border:1px solid #cbd5e1; border-radius:5px; background:#fff; color:var(--text); cursor:pointer; font-size:.8rem; font-weight:700; }
+.active-filters { display:flex; flex-wrap:wrap; gap:.4rem; }
+.active-filter-chip { padding:.3rem .55rem; border:0; border-radius:999px; background:#eef2ff; color:#3730a3; cursor:pointer; font-size:.78rem; font-weight:700; }
+.selection-toolbar { background:#eef2ff; border-color:#c7d2fe; }
+.selection-toolbar > span { font-weight:750; color:#3730a3; }
+.selection-actions { display:flex; flex-wrap:wrap; gap:.45rem; }
+.selection-actions #delete-selected { border-color:#fecaca; color:#b91c1c; }
+.document-select { display:inline-flex; align-items:center; justify-content:center; flex:0 0 auto; cursor:pointer; }
+.document-select input { width:1.05rem; height:1.05rem; margin:0; accent-color:var(--primary); cursor:pointer; }
+.doc-card:focus-visible { outline:3px solid #818cf8; outline-offset:2px; }
+.doc-card-header h4 { color:var(--text); line-height:1.35; }
+.doc-card .card-date { margin-top:.45rem; }
+.doc-card .card-expiration { padding:.25rem .5rem; width:fit-content; border-radius:999px; background:#fff7ed; }
+.doc-card .tag { border:0; font-weight:700; }
+#read-modal .modal-content { width:min(100%,760px); max-height:min(90vh,900px); max-height:min(90dvh,900px); overscroll-behavior:contain; }
+#read-modal .read-heading { flex-wrap:wrap; }
+@media (max-width:700px) {
+    .filter-summary, .selection-toolbar { align-items:flex-start; flex-direction:column; }
+    .selection-actions { width:100%; }
+    #read-modal { align-items:flex-end; padding:.4rem; }
+    #read-modal .modal-content { width:100%; max-height:92vh; max-height:92dvh; padding:1.25rem 1rem; border-radius:12px 12px 6px 6px; }
+}

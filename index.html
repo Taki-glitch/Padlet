@@ -52,6 +52,7 @@
                     <button id="view-grid" type="button" aria-pressed="true">Grille</button>
                     <button id="view-list" type="button" aria-pressed="false">Liste</button>
                 </div>
+                <button id="select-mode-toggle" class="select-mode-toggle" type="button" aria-pressed="false">Sélectionner</button>
             </div>
             <div id="storage-indicator" class="storage-indicator" role="status" aria-live="polite">
                 <div class="storage-heading"><span>💾 Stockage</span><strong id="storage-value">Chargement…</strong></div>
@@ -60,6 +61,17 @@
             </div>
         </section>
         <p id="results-count" class="results-count" aria-live="polite"></p>
+        <section id="filter-summary" class="filter-summary hidden" aria-label="Critères actifs">
+            <div id="active-filters" class="active-filters"></div>
+            <button id="reset-filters" type="button">Réinitialiser les filtres</button>
+        </section>
+        <section id="selection-toolbar" class="selection-toolbar hidden" aria-label="Actions groupées">
+            <span id="selection-count" aria-live="polite">0 document sélectionné</span>
+            <div class="selection-actions">
+                <button id="clear-selection" type="button">Tout désélectionner</button>
+                <button id="delete-selected" class="delete hidden" type="button">Supprimer la sélection</button>
+            </div>
+        </section>
         <p id="app-status" class="app-status" role="status">Connexion à votre tableau…</p>
         <section id="view-themes" class="view active" aria-label="Documents par thème"></section>
         <section id="view-timeline" class="view hidden" aria-label="Frise chronologique">

@@ -54,13 +54,17 @@ const selectionCount = $("selection-count");
 const deleteSelectedButton = $("delete-selected");
 const activeFilters = $("active-filters");
 const filterSummary = $("filter-summary");
+const recentlyViewedSection = $("recently-viewed");
+const recentlyViewedList = $("recently-viewed-list");
 const DISPLAY_MODE_KEY = "padlet-display-mode";
+const RECENTLY_VIEWED_LIMIT = 6;
 let displayMode = (() => {
     try { return localStorage.getItem(DISPLAY_MODE_KEY) === "list" ? "list" : "grid"; }
     catch { return "grid"; }
 })();
 let readModalItem = null;
 let readModalReturnFocus = null;
+let readModalReturnView = "themes";
 let selectionMode = false;
 const selectedDocumentIds = new Set();
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -105,6 +109,37 @@ function toggleFavorite(item) {
     ids.has(item.id) ? ids.delete(item.id) : ids.add(item.id);
     localStorage.setItem(key, JSON.stringify([...ids]));
     render();
+}
+
+function recentlyViewedStorageKey() { return currentUser?.id ? `padlet-recently-viewed:${currentUser.id}` : ""; }
+function recentlyViewedIds() {
+    const key = recentlyViewedStorageKey();
+    if (!key) return [];
+    try {
+        const ids = JSON.parse(localStorage.getItem(key) || "[]");
+        return Array.isArray(ids) ? [...new Set(ids.filter((id) => typeof id === "string"))].slice(0, RECENTLY_VIEWED_LIMIT) : [];
+    } catch { return []; }
+}
+function rememberRecentlyViewed(item) {
+    const key = recentlyViewedStorageKey();
+    if (!key || item?.type !== "document" || !item.id) return;
+    try { localStorage.setItem(key, JSON.stringify([item.id, ...recentlyViewedIds().filter((id) => id !== item.id)].slice(0, RECENTLY_VIEWED_LIMIT))); }
+    catch { /* L'accès rapide reste facultatif si le navigateur désactive le stockage local. */ }
+}
+function renderRecentlyViewed() {
+    recentlyViewedList.replaceChildren();
+    const byId = new Map(documentItems().map((item) => [item.id, item]));
+    const recent = recentlyViewedIds().map((id) => byId.get(id)).filter(Boolean);
+    recent.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "recent-document-button";
+        button.dataset.documentId = item.id;
+        button.textContent = item.title || "Sans titre";
+        button.addEventListener("click", () => openReadModal(item));
+        recentlyViewedList.append(button);
+    });
+    recentlyViewedSection.classList.toggle("hidden", recent.length === 0);
 }
 
 function applyRoleUi() {
@@ -247,6 +282,59 @@ function normalizeOrganizationValue(value = "") {
     return normalizeSearchText(value).replace(/\s+/g, " ").trim();
 }
 
+function highlightSearchTerms(container) {
+    const terms = [...new Set(normalizeSearchText(searchInput.value).trim().split(/\s+/).filter(Boolean))];
+    if (!terms.length) return;
+    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
+    const textNodes = [];
+    let node;
+    while ((node = walker.nextNode())) {
+        if (node.nodeValue.trim() && !node.parentElement?.closest("a, mark")) textNodes.push(node);
+    }
+    textNodes.forEach((textNode) => {
+        const original = textNode.nodeValue;
+        let foldedText = "";
+        const offsets = [];
+        for (let index = 0; index < original.length;) {
+            const character = String.fromCodePoint(original.codePointAt(index));
+            const end = index + character.length;
+            for (const foldedCharacter of normalizeSearchText(character)) {
+                foldedText += foldedCharacter;
+                offsets.push({ start: index, end });
+            }
+            if (!normalizeSearchText(character) && /[\u0300-\u036f]/.test(character) && offsets.length) offsets[offsets.length - 1].end = end;
+            index = end;
+        }
+        const ranges = [];
+        terms.forEach((term) => {
+            let index = 0;
+            while ((index = foldedText.indexOf(term, index)) !== -1) {
+                ranges.push({ start: offsets[index].start, end: offsets[index + term.length - 1].end });
+                index += term.length;
+            }
+        });
+        if (!ranges.length) return;
+        ranges.sort((a, b) => a.start - b.start || a.end - b.end);
+        const merged = ranges.reduce((result, range) => {
+            const previous = result[result.length - 1];
+            if (previous && range.start <= previous.end) previous.end = Math.max(previous.end, range.end);
+            else result.push({ ...range });
+            return result;
+        }, []);
+        const fragment = document.createDocumentFragment();
+        let cursor = 0;
+        merged.forEach(({ start, end }) => {
+            fragment.append(document.createTextNode(original.slice(cursor, start)));
+            const mark = document.createElement("mark");
+            mark.textContent = original.slice(start, end);
+            fragment.append(mark);
+            cursor = end;
+        });
+        fragment.append(document.createTextNode(original.slice(cursor)));
+        textNode.replaceWith(fragment);
+    });
+}
+
 function displayTheme(value = "") { return String(value).trim().replace(/\s+/g, " "); }
 
 function documentItems() { return items.filter((item) => item.type === "document"); }
@@ -357,14 +445,23 @@ function renderMarkdownSummary(container, value) {
 }
 
 function filteredItems() {
+    // Every search word must match somewhere in the item's searchable text; accents and case are ignored.
     const terms = normalizeSearchText(searchInput.value).trim().split(/\s+/).filter(Boolean);
+    const seen = new Set();
     return items.filter((item) => {
-        const haystack = normalizeSearchText([item.title, item.summary, item.description, item.tags, item.theme, item.content].filter(Boolean).join(" "));
+        const identity = item.id || item;
+        const haystack = normalizeSearchText([
+            item.title, item.summary, item.description, item.tags, item.theme, item.content,
+            item.fileName, item.fileType, item.date, item.publishedAt, item.expiresAt, item.retentionMonths
+        ].filter((value) => value !== null && value !== undefined && value !== "").join(" "));
         const matchesSearch = terms.every((term) => haystack.includes(term));
         const matchesTheme = !themeFilter.value || normalizeOrganizationValue(item.theme) === themeFilter.value;
         const matchesTag = !tagFilter.value || formatTags(item.tags).some((tag) => normalizeOrganizationValue(tag) === tagFilter.value);
         const matchesFavorite = favoriteFilter.value !== "favorites" || (item.type === "document" && isFavorite(item));
-        return matchesSearch && matchesTheme && matchesTag && matchesFavorite;
+        const matches = matchesSearch && matchesTheme && matchesTag && matchesFavorite;
+        if (!matches || seen.has(identity)) return false;
+        seen.add(identity);
+        return true;
     });
 }
 
@@ -452,6 +549,7 @@ function render() {
     renderResultsCount();
     renderActiveFilters();
     updateSelectionToolbar();
+    renderRecentlyViewed();
     renderThemes();
     renderTimeline();
     renderDashboard();
@@ -491,10 +589,12 @@ function renderActiveFilters() {
 
 function updateSelectionToolbar() {
     const selectedCount = selectedDocumentIds.size;
+    const visibleIds = new Set(filteredItems().filter((item) => item.type === "document").map((item) => item.id));
+    const hiddenSelectedCount = [...selectedDocumentIds].filter((id) => !visibleIds.has(id)).length;
     selectionToolbar.classList.toggle("hidden", !selectionMode);
     selectModeButton.setAttribute("aria-pressed", String(selectionMode));
     selectModeButton.textContent = selectionMode ? "Annuler la sélection" : "Sélectionner";
-    selectionCount.textContent = `${selectedCount} document${selectedCount === 1 ? "" : "s"} sélectionné${selectedCount === 1 ? "" : "s"}`;
+    selectionCount.textContent = `${selectedCount} document${selectedCount === 1 ? "" : "s"} sélectionné${selectedCount === 1 ? "" : "s"}${hiddenSelectedCount ? ` (${hiddenSelectedCount} hors filtres)` : ""}`;
     deleteSelectedButton.classList.toggle("hidden", !isAdmin() || selectedCount === 0);
 }
 
@@ -528,7 +628,13 @@ function renderThemes() {
     listViewButton.setAttribute("aria-pressed", String(displayMode === "list"));
     const documents = filteredItems().filter((item) => item.type === "document");
     if (!documents.length) {
-        viewThemes.append(createEmpty(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value ? "Aucun document ne correspond à vos critères." : "Aucun document pour le moment. Ajoutez-en un pour commencer."));
+        const hasCriteria = Boolean(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value);
+        const emptyMessage = favoriteFilter.value === "favorites"
+            ? "Aucun document favori ne correspond à ces critères. Vous pouvez réinitialiser les filtres pour tout afficher."
+            : hasCriteria
+                ? "Aucun document ne correspond à vos critères. Vous pouvez réinitialiser les filtres pour tout afficher."
+                : "Aucun document pour le moment. Ajoutez-en un pour commencer.";
+        viewThemes.append(createEmpty(emptyMessage));
         return;
     }
     if (displayMode === "list") {
@@ -634,6 +740,7 @@ function createDocumentCard(item) {
     card.tabIndex = 0;
     const header = document.createElement("div"); header.className = "doc-card-header";
     const title = document.createElement("h4"); title.textContent = item.title || "Sans titre";
+    highlightSearchTerms(title);
     const favorite = document.createElement("button"); favorite.type = "button"; favorite.className = `favorite-button${isFavorite(item) ? " is-favorite" : ""}`;
     favorite.textContent = isFavorite(item) ? "★" : "☆";
     favorite.setAttribute("aria-label", isFavorite(item) ? "Retirer des favoris" : "Ajouter aux favoris");
@@ -658,6 +765,7 @@ function createDocumentCard(item) {
         : dateLabel(item.date);
     const expiration = expirationLabel(item);
     const summary = document.createElement("div"); summary.className = "doc-summary-preview"; renderMarkdownSummary(summary, item.summary || "Sans résumé");
+    if (item.summary) highlightSearchTerms(summary);
     const tags = createTagButtons(item.tags);
     const actions = createActions(item);
     card.append(header);
@@ -723,7 +831,11 @@ function createActions(item) {
 function renderTimeline() {
     timelineContainer.replaceChildren();
     const sorted = [...filteredItems()].sort(sortTimelineByDate);
-    if (!sorted.length) { timelineContainer.append(createEmpty(searchInput.value.trim() ? "Aucun élément ne correspond à votre recherche." : "Votre frise apparaîtra ici.")); return; }
+    if (!sorted.length) {
+        const hasCriteria = Boolean(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value);
+        timelineContainer.append(createEmpty(hasCriteria ? "Aucun élément ne correspond à vos critères. Réinitialisez les filtres pour tout afficher." : "Votre frise apparaîtra ici."));
+        return;
+    }
     const width = Math.max(900, 230 + (sorted.length - 1) * 230);
     timelineContainer.style.setProperty("--timeline-width", `${width}px`);
     sorted.forEach((item, index) => {
@@ -897,7 +1009,7 @@ async function deleteItemRecord(item) {
 
 async function removeSelectedDocuments() {
     if (!requireAdmin()) return;
-    const selected = documentItems().filter((item) => selectedDocumentIds.has(item.id));
+    const selected = [...new Map(documentItems().filter((item) => selectedDocumentIds.has(item.id)).map((item) => [item.id, item])).values()];
     if (!selected.length) {
         selectedDocumentIds.clear();
         render();
@@ -905,7 +1017,10 @@ async function removeSelectedDocuments() {
         return;
     }
     const count = selected.length;
-    if (!window.confirm(`Supprimer définitivement ${count} document${count === 1 ? "" : "s"} sélectionné${count === 1 ? "" : "s"} ? Les fichiers associés seront aussi supprimés. Cette action ne peut pas être annulée.`)) return;
+    const visibleIds = new Set(filteredItems().filter((item) => item.type === "document").map((item) => item.id));
+    const outsideFilters = selected.filter((item) => !visibleIds.has(item.id)).length;
+    const hiddenNote = outsideFilters ? ` ${outsideFilters} document${outsideFilters === 1 ? "" : "s"} ne sont pas visibles avec les critères actuels.` : "";
+    if (!window.confirm(`Supprimer définitivement ${count} document${count === 1 ? "" : "s"} sélectionné${count === 1 ? "" : "s"} ?${hiddenNote} Les fichiers associés seront aussi supprimés. Cette action ne peut pas être annulée.`)) return;
 
     deleteSelectedButton.disabled = true;
     deleteSelectedButton.textContent = "Suppression…";
@@ -942,7 +1057,10 @@ async function removeSelectedDocuments() {
 
 function openReadModal(item) {
     readModalReturnFocus = document.activeElement;
+    readModalReturnView = !viewTimeline.classList.contains("hidden") ? "timeline" : !viewDashboard.classList.contains("hidden") ? "dashboard" : "themes";
     readModalItem = item;
+    rememberRecentlyViewed(item);
+    renderRecentlyViewed();
     $("read-type").textContent = item.type === "deadline" ? "Échéance" : "Document";
     $("read-title").textContent = item.title || "Sans titre";
     $("read-date").textContent = item.type === "document"
@@ -959,7 +1077,10 @@ function openReadModal(item) {
     updateReadFavoriteButton();
     const summary = $("read-summary");
     if (item.type === "deadline") summary.textContent = item.description || "Aucune précision.";
-    else renderMarkdownSummary(summary, item.summary || "Sans résumé");
+    else {
+        renderMarkdownSummary(summary, item.summary || "Sans résumé");
+        if (item.summary) highlightSearchTerms(summary);
+    }
     const content = $("read-content");
     content.textContent = item.type === "document" ? (item.content || "") : "";
     content.classList.toggle("hidden", !content.textContent);
@@ -980,11 +1101,12 @@ function openReadModal(item) {
 function closeReadModal() {
     if (readModal.classList.contains("hidden")) return;
     readModal.classList.add("hidden");
-    const returnTarget = viewThemes.classList.contains("hidden")
-        ? btnTheme
-        : readModalReturnFocus?.isConnected && readModalReturnFocus !== document.body
-            ? readModalReturnFocus
-            : selectModeButton;
+    renderRecentlyViewed();
+    const recentButton = readModalItem?.id
+        ? [...recentlyViewedList.querySelectorAll(".recent-document-button")].find((button) => button.dataset.documentId === readModalItem.id)
+        : null;
+    const fallbackTarget = readModalReturnView === "timeline" ? btnTimeline : readModalReturnView === "dashboard" ? btnDashboard : recentButton || selectModeButton;
+    const returnTarget = readModalReturnFocus?.isConnected && readModalReturnFocus !== document.body ? readModalReturnFocus : fallbackTarget;
     returnTarget?.focus();
     readModalReturnFocus = null;
 }
@@ -1077,10 +1199,14 @@ function setView(view) {
     btnTheme.classList.toggle("active", selected === "themes");
     btnTimeline.classList.toggle("active", selected === "timeline");
     btnDashboard.classList.toggle("active", selected === "dashboard");
+    btnTheme.setAttribute("aria-current", selected === "themes" ? "page" : "false");
+    btnTimeline.setAttribute("aria-current", selected === "timeline" ? "page" : "false");
+    btnDashboard.setAttribute("aria-current", selected === "dashboard" ? "page" : "false");
 
     viewThemes.classList.toggle("hidden", selected !== "themes");
     viewTimeline.classList.toggle("hidden", selected !== "timeline");
     viewDashboard.classList.toggle("hidden", selected !== "dashboard");
+    recentlyViewedSection.classList.toggle("hidden", selected !== "themes" || recentlyViewedList.childElementCount === 0);
 
     if (selected === "timeline") renderTimeline();
 }
@@ -1126,6 +1252,17 @@ $("close-form").addEventListener("click", () => formModal.classList.add("hidden"
 $("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));
 window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) closeReadModal(); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); if (event.target === $("admin-users-modal")) $("admin-users-modal").classList.add("hidden"); });
 window.addEventListener("keydown", (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        const target = event.target;
+        const editing = target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName));
+        const modalOpen = [...document.querySelectorAll(".modal")].some((modal) => !modal.classList.contains("hidden"));
+        if (!editing && !modalOpen) {
+            event.preventDefault();
+            searchInput.focus();
+            searchInput.select();
+        }
+        return;
+    }
     if (event.key === "Escape") {
         formModal.classList.add("hidden"); closeReadModal(); timelineFormModal.classList.add("hidden"); $("admin-users-modal").classList.add("hidden");
         return;

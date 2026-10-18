@@ -48,6 +48,10 @@
                         <option value="title-desc">Titre — Z → A</option>
                     </select>
                 </label>
+                <div class="display-mode" role="group" aria-label="Affichage des documents">
+                    <button id="view-grid" type="button" aria-pressed="true">Grille</button>
+                    <button id="view-list" type="button" aria-pressed="false">Liste</button>
+                </div>
             </div>
             <div id="storage-indicator" class="storage-indicator" role="status" aria-live="polite">
                 <div class="storage-heading"><span>💾 Stockage</span><strong id="storage-value">Chargement…</strong></div>
@@ -137,7 +141,10 @@
             <button class="close-btn" id="close-read" type="button" aria-label="Fermer">&times;</button>
             <p id="read-type" class="item-kind"></p>
             <h2 id="read-title"></h2>
-            <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span></div>
+            <div class="read-heading">
+                <button id="read-favorite" class="favorite-button" type="button" aria-label="Ajouter aux favoris" title="Ajouter aux favoris">☆</button>
+                <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span><span id="read-expiration-wrap" class="hidden"> · <span id="read-expiration"></span></span></div>
+            </div>
             <div id="read-tags" class="tags-container"></div>
             <div id="read-summary" class="read-summary"></div>
             <p id="read-content"></p>

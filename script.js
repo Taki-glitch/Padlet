@@ -46,6 +46,14 @@ const tagFilter = $("tag-filter");
 const favoriteFilter = $("favorite-filter");
 const sortControl = $("sort-control");
 const resultsCount = $("results-count");
+const gridViewButton = $("view-grid");
+const listViewButton = $("view-list");
+const DISPLAY_MODE_KEY = "padlet-display-mode";
+let displayMode = (() => {
+    try { return localStorage.getItem(DISPLAY_MODE_KEY) === "list" ? "list" : "grid"; }
+    catch { return "grid"; }
+})();
+let readModalItem = null;
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
 let storageUsedBytes = null;
 let unsubscribeItems = null;
@@ -439,9 +447,16 @@ function renderResultsCount() {
 
 function renderThemes() {
     viewThemes.replaceChildren();
+    viewThemes.classList.toggle("list-view", displayMode === "list");
+    gridViewButton.setAttribute("aria-pressed", String(displayMode === "grid"));
+    listViewButton.setAttribute("aria-pressed", String(displayMode === "list"));
     const documents = filteredItems().filter((item) => item.type === "document");
     if (!documents.length) {
         viewThemes.append(createEmpty(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value ? "Aucun document ne correspond à vos critères." : "Aucun document pour le moment. Ajoutez-en un pour commencer."));
+        return;
+    }
+    if (displayMode === "list") {
+        sortDocuments(documents).forEach((item) => viewThemes.append(createDocumentCard(item)));
         return;
     }
     const themes = new Map();
@@ -539,21 +554,37 @@ function sortTimelineByDate(a, b) { return new Date(timelineDate(a)) - new Date(
 
 function createDocumentCard(item) {
     const card = document.createElement("article");
-    card.className = "doc-card";
+    card.className = `doc-card${displayMode === "list" ? " doc-list-row" : ""}`;
     const header = document.createElement("div"); header.className = "doc-card-header";
-    const title = document.createElement("h4"); title.textContent = item.title;
+    const title = document.createElement("h4"); title.textContent = item.title || "Sans titre";
     const favorite = document.createElement("button"); favorite.type = "button"; favorite.className = `favorite-button${isFavorite(item) ? " is-favorite" : ""}`;
     favorite.textContent = isFavorite(item) ? "★" : "☆";
     favorite.setAttribute("aria-label", isFavorite(item) ? "Retirer des favoris" : "Ajouter aux favoris");
     favorite.title = favorite.getAttribute("aria-label");
     favorite.addEventListener("click", (event) => { event.stopPropagation(); toggleFavorite(item); });
     header.append(title, favorite);
-    const date = document.createElement("p"); date.className = "card-date"; date.textContent = dateLabel(item.date);
+    const date = document.createElement("p"); date.className = "card-date";
+    date.textContent = displayMode === "list"
+        ? `Ajouté le ${dateLabel(String(item.publishedAt || item.date || "").slice(0, 10))}`
+        : dateLabel(item.date);
     const expiration = expirationLabel(item);
     const summary = document.createElement("div"); summary.className = "doc-summary-preview"; renderMarkdownSummary(summary, item.summary || "Sans résumé");
     const tags = createTagButtons(item.tags);
     const actions = createActions(item);
-    card.append(header, date);
+    card.append(header);
+    if (displayMode === "list") {
+        const metadata = document.createElement("div"); metadata.className = "list-metadata";
+        const theme = document.createElement("span"); theme.textContent = displayTheme(item.theme) || "Sans thème";
+        metadata.append(theme, date);
+        const expiry = expirationDate(item);
+        if (expiry) {
+            const expirationDetail = document.createElement("span");
+            expirationDetail.className = "list-expiration";
+            expirationDetail.textContent = `Échéance : ${dateLabel(expiry)}`;
+            metadata.append(expirationDetail);
+        }
+        card.append(metadata);
+    } else card.append(date);
     if (expiration) { const notice = document.createElement("p"); notice.className = "card-expiration"; notice.textContent = expiration; card.append(notice); }
     card.append(summary);
     if (tags.childElementCount) card.append(tags);
@@ -762,13 +793,27 @@ async function removeItem(item) {
 }
 
 function openReadModal(item) {
+    readModalItem = item;
     $("read-type").textContent = item.type === "deadline" ? "Échéance" : "Document";
-    $("read-title").textContent = item.title; $("read-date").textContent = dateLabel(item.date);
-    $("read-theme").textContent = item.theme || ""; $("read-theme-wrap").classList.toggle("hidden", !item.theme);
+    $("read-title").textContent = item.title || "Sans titre";
+    $("read-date").textContent = item.type === "document"
+        ? `Ajouté le ${dateLabel(String(item.publishedAt || item.date || "").slice(0, 10))}`
+        : dateLabel(item.date);
+    const theme = displayTheme(item.theme);
+    $("read-theme").textContent = theme;
+    $("read-theme-wrap").classList.toggle("hidden", !theme);
+    const expiry = expirationDate(item);
+    $("read-expiration").textContent = expiry ? `Échéance : ${dateLabel(expiry)}` : "";
+    $("read-expiration-wrap").classList.toggle("hidden", !expiry);
+    const readFavorite = $("read-favorite");
+    readFavorite.classList.toggle("hidden", item.type !== "document");
+    updateReadFavoriteButton();
     const summary = $("read-summary");
     if (item.type === "deadline") summary.textContent = item.description || "Aucune précision.";
-    else renderMarkdownSummary(summary, item.summary);
-    $("read-content").textContent = item.type === "document" ? (item.content || "") : "";
+    else renderMarkdownSummary(summary, item.summary || "Sans résumé");
+    const content = $("read-content");
+    content.textContent = item.type === "document" ? (item.content || "") : "";
+    content.classList.toggle("hidden", !content.textContent);
     const tags = $("read-tags"); tags.replaceChildren();
     if (item.type === "document") {
         const tagButtons = createTagButtons(item.tags);
@@ -780,6 +825,22 @@ function openReadModal(item) {
         else { const link = document.createElement("a"); link.className = "file-link"; link.href = item.fileUrl; link.target = "_blank"; link.rel = "noopener"; link.textContent = item.fileType === "application/pdf" ? "Prévisualiser le PDF" : `Télécharger ${item.fileName || "le fichier"}`; preview.append(link); }
     }
     readModal.classList.remove("hidden");
+}
+
+function updateReadFavoriteButton() {
+    if (!readModalItem || readModalItem.type !== "document") return;
+    const favorite = isFavorite(readModalItem);
+    const button = $("read-favorite");
+    button.textContent = favorite ? "★" : "☆";
+    button.classList.toggle("is-favorite", favorite);
+    button.setAttribute("aria-label", favorite ? "Retirer des favoris" : "Ajouter aux favoris");
+    button.title = button.getAttribute("aria-label");
+}
+
+function setDisplayMode(mode) {
+    displayMode = mode === "list" ? "list" : "grid";
+    try { localStorage.setItem(DISPLAY_MODE_KEY, displayMode); } catch { /* La préférence reste utilisable pour cette session. */ }
+    renderThemes();
 }
 
 async function callAdminUsers(action, payload = {}) {
@@ -883,6 +944,13 @@ document.querySelectorAll('input[name="item-type"]').forEach((input) => input.ad
 searchInput.addEventListener("input", render);
 clearSearchButton.addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); render(); });
 [themeFilter, tagFilter, favoriteFilter, sortControl].forEach((control) => control.addEventListener("change", render));
+gridViewButton.addEventListener("click", () => setDisplayMode("grid"));
+listViewButton.addEventListener("click", () => setDisplayMode("list"));
+$("read-favorite").addEventListener("click", () => {
+    if (!readModalItem || readModalItem.type !== "document") return;
+    toggleFavorite(readModalItem);
+    updateReadFavoriteButton();
+});
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
 $("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", () => readModal.classList.add("hidden"));
 $("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));

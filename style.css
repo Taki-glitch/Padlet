@@ -77,3 +77,10 @@ form { display:flex; flex-direction:column; gap:.85rem; } form label { display:f
     #read-modal { align-items:flex-end; padding:.4rem; }
     #read-modal .modal-content { width:100%; max-height:92vh; max-height:92dvh; padding:1.25rem 1rem; border-radius:12px 12px 6px 6px; }
 }
+.recently-viewed { margin:.25rem 0 .9rem; padding:.75rem .85rem; border:1px solid #dbe2ea; border-radius:8px; background:var(--card-bg); }
+.recently-viewed h2 { margin:0 0 .55rem; font-size:.9rem; color:var(--muted); }
+.recently-viewed-list { display:flex; flex-wrap:wrap; gap:.45rem; }
+.recent-document-button { max-width:min(100%,260px); padding:.4rem .65rem; overflow:hidden; border:1px solid #c7d2fe; border-radius:999px; background:#eef2ff; color:#3730a3; cursor:pointer; font-size:.82rem; font-weight:700; text-overflow:ellipsis; white-space:nowrap; }
+.recent-document-button:focus-visible, .active-filter-chip:focus-visible, .select-mode-toggle:focus-visible { outline:3px solid #818cf8; outline-offset:2px; }
+mark { padding:0 .08em; border-radius:2px; background:#fef08a; color:inherit; }
+nav button[aria-current="page"] { background:var(--primary-soft); color:var(--primary); }

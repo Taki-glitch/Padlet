@@ -16,7 +16,7 @@
             <span id="auth-user" class="auth-user hidden" aria-live="polite"></span>
             <button id="btn-sign-out" class="hidden" type="button">Se déconnecter</button>
             <button id="btn-admin-users" class="hidden" type="button">Utilisateurs</button>
-            <button id="btn-theme" class="active" type="button">Documents</button>
+            <button id="btn-theme" class="active" type="button" aria-current="page">Documents</button>
             <button id="btn-timeline" type="button">Frise chronologique</button>
             <button id="btn-dashboard" type="button">Tableau de bord</button>
             <button id="btn-add" class="btn-primary" type="button">+ Ajouter</button>
@@ -73,6 +73,10 @@
             </div>
         </section>
         <p id="app-status" class="app-status" role="status">Connexion à votre tableau…</p>
+        <section id="recently-viewed" class="recently-viewed hidden" aria-label="Documents consultés récemment">
+            <h2>Consultés récemment</h2>
+            <div id="recently-viewed-list" class="recently-viewed-list"></div>
+        </section>
         <section id="view-themes" class="view active" aria-label="Documents par thème"></section>
         <section id="view-timeline" class="view hidden" aria-label="Frise chronologique">
             <div class="timeline-help">Cliquez-glissez sur la frise pour parcourir le temps.</div>

@@ -48,12 +48,21 @@ const sortControl = $("sort-control");
 const resultsCount = $("results-count");
 const gridViewButton = $("view-grid");
 const listViewButton = $("view-list");
+const selectModeButton = $("select-mode-toggle");
+const selectionToolbar = $("selection-toolbar");
+const selectionCount = $("selection-count");
+const deleteSelectedButton = $("delete-selected");
+const activeFilters = $("active-filters");
+const filterSummary = $("filter-summary");
 const DISPLAY_MODE_KEY = "padlet-display-mode";
 let displayMode = (() => {
     try { return localStorage.getItem(DISPLAY_MODE_KEY) === "list" ? "list" : "grid"; }
     catch { return "grid"; }
 })();
 let readModalItem = null;
+let readModalReturnFocus = null;
+let selectionMode = false;
+const selectedDocumentIds = new Set();
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
 let storageUsedBytes = null;
 let unsubscribeItems = null;
@@ -103,9 +112,14 @@ function applyRoleUi() {
     $("btn-admin-users").classList.toggle("hidden", !isAdmin());
     formModal.classList.add("hidden");
     timelineFormModal.classList.add("hidden");
+    updateSelectionToolbar();
 }
 
 function setAuthenticatedUi(user, profile = null) {
+    if (currentUser?.id !== user?.id) {
+        selectionMode = false;
+        selectedDocumentIds.clear();
+    }
     currentUser = user;
     currentProfile = profile;
     const username = profile?.username || user?.user_metadata?.username || "utilisateur";
@@ -175,7 +189,13 @@ async function startFirestoreSession(session) {
     firebaseSessionUserId = credential.user.uid;
     firebaseSessionRole = token.claims.role;
     unsubscribeItems = onSnapshot(itemsCollection,
-        (snapshot) => { items = snapshot.docs.map((item) => item.data()); render(); setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`); },
+        (snapshot) => {
+            items = snapshot.docs.map((item) => item.data());
+            const availableIds = new Set(documentItems().map((item) => item.id));
+            [...selectedDocumentIds].forEach((id) => { if (!availableIds.has(id)) selectedDocumentIds.delete(id); });
+            render();
+            setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`);
+        },
         (error) => { console.error(error); setStatus("Connexion Firestore impossible. Vérifiez votre session Firebase et vos règles Firestore.", true); });
     await refreshStorageUsage();
 }
@@ -430,6 +450,8 @@ function render() {
     updateOrganizationControls();
     clearSearchButton.classList.toggle("hidden", !searchInput.value);
     renderResultsCount();
+    renderActiveFilters();
+    updateSelectionToolbar();
     renderThemes();
     renderTimeline();
     renderDashboard();
@@ -443,6 +465,60 @@ function renderResultsCount() {
     else if (hasSearch) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à votre recherche`;
     else if (hasFilters) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à vos filtres`;
     else resultsCount.textContent = `${count} document${count > 1 ? "s" : ""}`;
+}
+
+function renderActiveFilters() {
+    activeFilters.replaceChildren();
+    const criteria = [];
+    const query = searchInput.value.trim();
+    if (query) criteria.push({ label: `Recherche : ${query}`, clear: () => { searchInput.value = ""; } });
+    if (themeFilter.value) criteria.push({ label: `Thème : ${themeFilter.selectedOptions[0]?.textContent || themeFilter.value}`, clear: () => { themeFilter.value = ""; } });
+    if (tagFilter.value) criteria.push({ label: `Tag : ${tagFilter.selectedOptions[0]?.textContent || tagFilter.value}`, clear: () => { tagFilter.value = ""; } });
+    if (favoriteFilter.value) criteria.push({ label: "Favoris", clear: () => { favoriteFilter.value = ""; } });
+    const selectedSort = sortControl.options[sortControl.selectedIndex];
+    criteria.push({ label: `Tri : ${selectedSort?.textContent || sortControl.value}`, clear: () => { sortControl.value = "date-desc"; } });
+    criteria.forEach(({ label, clear }) => {
+        const chip = document.createElement("button");
+        chip.type = "button";
+        chip.className = "active-filter-chip";
+        chip.textContent = `${label} ×`;
+        chip.setAttribute("aria-label", `Retirer le critère ${label}`);
+        chip.addEventListener("click", () => { clear(); render(); });
+        activeFilters.append(chip);
+    });
+    filterSummary.classList.toggle("hidden", criteria.length === 0);
+}
+
+function updateSelectionToolbar() {
+    const selectedCount = selectedDocumentIds.size;
+    selectionToolbar.classList.toggle("hidden", !selectionMode);
+    selectModeButton.setAttribute("aria-pressed", String(selectionMode));
+    selectModeButton.textContent = selectionMode ? "Annuler la sélection" : "Sélectionner";
+    selectionCount.textContent = `${selectedCount} document${selectedCount === 1 ? "" : "s"} sélectionné${selectedCount === 1 ? "" : "s"}`;
+    deleteSelectedButton.classList.toggle("hidden", !isAdmin() || selectedCount === 0);
+}
+
+function setSelectionMode(enabled) {
+    selectionMode = Boolean(enabled);
+    if (!selectionMode) selectedDocumentIds.clear();
+    updateSelectionToolbar();
+    renderThemes();
+}
+
+function toggleDocumentSelection(item, checked) {
+    if (!item?.id || item.type !== "document") return;
+    if (checked) selectedDocumentIds.add(item.id);
+    else selectedDocumentIds.delete(item.id);
+    updateSelectionToolbar();
+}
+
+function resetFilters() {
+    searchInput.value = "";
+    themeFilter.value = "";
+    tagFilter.value = "";
+    favoriteFilter.value = "";
+    sortControl.value = "date-desc";
+    render();
 }
 
 function renderThemes() {
@@ -555,6 +631,7 @@ function sortTimelineByDate(a, b) { return new Date(timelineDate(a)) - new Date(
 function createDocumentCard(item) {
     const card = document.createElement("article");
     card.className = `doc-card${displayMode === "list" ? " doc-list-row" : ""}`;
+    card.tabIndex = 0;
     const header = document.createElement("div"); header.className = "doc-card-header";
     const title = document.createElement("h4"); title.textContent = item.title || "Sans titre";
     const favorite = document.createElement("button"); favorite.type = "button"; favorite.className = `favorite-button${isFavorite(item) ? " is-favorite" : ""}`;
@@ -562,6 +639,18 @@ function createDocumentCard(item) {
     favorite.setAttribute("aria-label", isFavorite(item) ? "Retirer des favoris" : "Ajouter aux favoris");
     favorite.title = favorite.getAttribute("aria-label");
     favorite.addEventListener("click", (event) => { event.stopPropagation(); toggleFavorite(item); });
+    if (selectionMode) {
+        const selectLabel = document.createElement("label");
+        selectLabel.className = "document-select";
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.checked = selectedDocumentIds.has(item.id);
+        checkbox.setAttribute("aria-label", `Sélectionner ${item.title || "ce document"}`);
+        checkbox.addEventListener("click", (event) => event.stopPropagation());
+        checkbox.addEventListener("change", () => toggleDocumentSelection(item, checkbox.checked));
+        selectLabel.append(checkbox);
+        header.append(selectLabel);
+    }
     header.append(title, favorite);
     const date = document.createElement("p"); date.className = "card-date";
     date.textContent = displayMode === "list"
@@ -589,15 +678,21 @@ function createDocumentCard(item) {
     card.append(summary);
     if (tags.childElementCount) card.append(tags);
     card.append(actions);
-    card.addEventListener("click", () => openReadModal(item));
+    card.addEventListener("click", () => { card.focus(); openReadModal(item); });
+    card.addEventListener("keydown", (event) => {
+        if (event.target !== card || !["Enter", " "].includes(event.key)) return;
+        event.preventDefault();
+        openReadModal(item);
+    });
     return card;
 }
 
 function applyTagFilter(tag) {
     tagFilter.value = normalizeOrganizationValue(tag);
-    readModal.classList.add("hidden");
+    closeReadModal();
     setView(false);
     render();
+    tagFilter.focus();
 }
 
 function createTagButtons(tagsValue) {
@@ -785,14 +880,68 @@ async function removeItem(item) {
     if (!requireAdmin()) return;
     if (!window.confirm(`Supprimer « ${item.title} » ?`)) return;
     try {
-        await refreshAdminFirestoreSession();
-        await removeSupabaseFile(item.filePath, true);
-        await deleteDoc(doc(db, "padletItems", item.id));
+        await deleteItemRecord(item);
+        items = items.filter((entry) => entry.id !== item.id);
+        selectedDocumentIds.delete(item.id);
+        render();
         setStatus("Élément supprimé."); await refreshStorageUsage();
     } catch (error) { console.error(error); setStatus("La suppression a échoué.", true); }
 }
 
+async function deleteItemRecord(item) {
+    if (!requireAdmin()) throw new Error("Cette action est réservée aux administrateurs.");
+    await refreshAdminFirestoreSession();
+    await removeSupabaseFile(item.filePath, true);
+    await deleteDoc(doc(db, "padletItems", item.id));
+}
+
+async function removeSelectedDocuments() {
+    if (!requireAdmin()) return;
+    const selected = documentItems().filter((item) => selectedDocumentIds.has(item.id));
+    if (!selected.length) {
+        selectedDocumentIds.clear();
+        render();
+        setStatus("Aucun document sélectionné n’est disponible.", true);
+        return;
+    }
+    const count = selected.length;
+    if (!window.confirm(`Supprimer définitivement ${count} document${count === 1 ? "" : "s"} sélectionné${count === 1 ? "" : "s"} ? Les fichiers associés seront aussi supprimés. Cette action ne peut pas être annulée.`)) return;
+
+    deleteSelectedButton.disabled = true;
+    deleteSelectedButton.textContent = "Suppression…";
+    const deletedIds = new Set();
+    const failures = [];
+    try {
+        for (const item of selected) {
+            try {
+                await deleteItemRecord(item);
+                deletedIds.add(item.id);
+            } catch (error) {
+                console.error(`Suppression impossible pour « ${item.title || item.id} ».`, error);
+                failures.push(item);
+            }
+        }
+        if (deletedIds.size) {
+            items = items.filter((item) => !deletedIds.has(item.id));
+            deletedIds.forEach((id) => selectedDocumentIds.delete(id));
+        }
+        render();
+        await refreshStorageUsage();
+        if (failures.length) {
+            const failedTitles = failures.map((item) => item.title || "Sans titre").join(", ");
+            const deletedMessage = deletedIds.size ? `${deletedIds.size} document${deletedIds.size === 1 ? "" : "s"} supprimé${deletedIds.size === 1 ? "" : "s"}. ` : "Aucun document n’a pu être supprimé. ";
+            setStatus(`${deletedMessage}${failures.length} échec${failures.length === 1 ? "" : "s"} : ${failedTitles}. Les fiches en échec restent sélectionnées ; un fichier associé a pu être supprimé avant l’échec Firestore.`, true);
+        } else {
+            setStatus(`${deletedIds.size} document${deletedIds.size === 1 ? "" : "s"} supprimé${deletedIds.size === 1 ? "" : "s"}.`);
+        }
+    } finally {
+        deleteSelectedButton.disabled = false;
+        deleteSelectedButton.textContent = "Supprimer la sélection";
+    }
+}
+
 function openReadModal(item) {
+    readModalReturnFocus = document.activeElement;
     readModalItem = item;
     $("read-type").textContent = item.type === "deadline" ? "Échéance" : "Document";
     $("read-title").textContent = item.title || "Sans titre";
@@ -825,6 +974,19 @@ function openReadModal(item) {
         else { const link = document.createElement("a"); link.className = "file-link"; link.href = item.fileUrl; link.target = "_blank"; link.rel = "noopener"; link.textContent = item.fileType === "application/pdf" ? "Prévisualiser le PDF" : `Télécharger ${item.fileName || "le fichier"}`; preview.append(link); }
     }
     readModal.classList.remove("hidden");
+    $("close-read").focus();
+}
+
+function closeReadModal() {
+    if (readModal.classList.contains("hidden")) return;
+    readModal.classList.add("hidden");
+    const returnTarget = viewThemes.classList.contains("hidden")
+        ? btnTheme
+        : readModalReturnFocus?.isConnected && readModalReturnFocus !== document.body
+            ? readModalReturnFocus
+            : selectModeButton;
+    returnTarget?.focus();
+    readModalReturnFocus = null;
 }
 
 function updateReadFavoriteButton() {
@@ -946,16 +1108,40 @@ clearSearchButton.addEventListener("click", () => { searchInput.value = ""; sear
 [themeFilter, tagFilter, favoriteFilter, sortControl].forEach((control) => control.addEventListener("change", render));
 gridViewButton.addEventListener("click", () => setDisplayMode("grid"));
 listViewButton.addEventListener("click", () => setDisplayMode("list"));
+selectModeButton.addEventListener("click", () => setSelectionMode(!selectionMode));
+$("clear-selection").addEventListener("click", () => {
+    selectedDocumentIds.clear();
+    updateSelectionToolbar();
+    renderThemes();
+});
+deleteSelectedButton.addEventListener("click", removeSelectedDocuments);
+$("reset-filters").addEventListener("click", resetFilters);
 $("read-favorite").addEventListener("click", () => {
     if (!readModalItem || readModalItem.type !== "document") return;
     toggleFavorite(readModalItem);
     updateReadFavoriteButton();
 });
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
-$("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", () => readModal.classList.add("hidden"));
+$("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", closeReadModal);
 $("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));
-window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) readModal.classList.add("hidden"); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); if (event.target === $("admin-users-modal")) $("admin-users-modal").classList.add("hidden"); });
-window.addEventListener("keydown", (event) => { if (event.key === "Escape") { formModal.classList.add("hidden"); readModal.classList.add("hidden"); timelineFormModal.classList.add("hidden"); $("admin-users-modal").classList.add("hidden"); } });
+window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) closeReadModal(); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); if (event.target === $("admin-users-modal")) $("admin-users-modal").classList.add("hidden"); });
+window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+        formModal.classList.add("hidden"); closeReadModal(); timelineFormModal.classList.add("hidden"); $("admin-users-modal").classList.add("hidden");
+        return;
+    }
+    if (event.key !== "Tab" || readModal.classList.contains("hidden")) return;
+    const focusable = [...readModal.querySelectorAll('button:not([disabled]):not(.hidden), a[href], input:not([disabled]):not(.hidden), [tabindex]:not([tabindex="-1"])')]
+        .filter((element) => element.getClientRects().length > 0);
+    if (!focusable.length) { event.preventDefault(); return; }
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && (document.activeElement === first || !readModal.contains(document.activeElement))) {
+        event.preventDefault(); last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !readModal.contains(document.activeElement))) {
+        event.preventDefault(); first.focus();
+    }
+});
 
 timelineScroll.addEventListener("mousedown", (event) => { isDragging = false; dragStartX = event.pageX - timelineScroll.offsetLeft; startScrollLeft = timelineScroll.scrollLeft; timelineScroll.classList.add("dragging"); });
 timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.classList.contains("dragging")) return; event.preventDefault(); const distance = (event.pageX - timelineScroll.offsetLeft) - dragStartX; if (Math.abs(distance) > 4) isDragging = true; timelineScroll.scrollLeft = startScrollLeft - distance; });

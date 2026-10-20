@@ -62,9 +62,7 @@ const DISPLAY_MODE_KEY = "padlet-display-mode";
 const RECENTLY_VIEWED_LIMIT = 6;
 const PERSONAL_PREFERENCES_KEY = "padlet-personal-preferences:v1";
 const timelineScaleControl = $("timeline-scale");
-const timelineGroupingControl = $("timeline-grouping");
-const timelinePresentationControl = $("timeline-presentation");
-const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineView: "month", timelineGrouping: "month", timelinePresentation: "line", timelineAnchor: "" };
+const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineView: "month", timelineAnchor: "" };
 let localPreferencesAvailable = true;
 function personalPreferencesStorageKey(userId) { return userId ? `${PERSONAL_PREFERENCES_KEY}:${userId}` : ""; }
 function localDateValue(date) {
@@ -94,8 +92,6 @@ function loadPersonalPreferences(userId) {
         theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : PERSONAL_PREFERENCE_DEFAULTS.theme,
         accent: ["indigo", "blue", "teal", "rose"].includes(stored.accent) ? stored.accent : PERSONAL_PREFERENCE_DEFAULTS.accent,
         timelineView: ["month", "year"].includes(stored.timelineView) ? stored.timelineView : PERSONAL_PREFERENCE_DEFAULTS.timelineView,
-        timelineGrouping: ["month", "year"].includes(stored.timelineGrouping) ? stored.timelineGrouping : PERSONAL_PREFERENCE_DEFAULTS.timelineGrouping,
-        timelinePresentation: ["line", "grouped"].includes(stored.timelinePresentation) ? stored.timelinePresentation : PERSONAL_PREFERENCE_DEFAULTS.timelinePresentation,
         timelineAnchor: storedAnchor ? localDateValue(storedAnchor) : localDateValue(new Date())
     };
 }
@@ -153,8 +149,6 @@ function applyAppearance() {
     $("setting-accent").value = personalPreferences.accent;
     $("setting-timeline-view").value = personalPreferences.timelineView;
     timelineScaleControl.value = personalPreferences.timelineView;
-    timelineGroupingControl.value = personalPreferences.timelineGrouping;
-    timelinePresentationControl.value = personalPreferences.timelinePresentation;
 }
 
 function isAdmin() { return currentProfile?.role === "admin"; }
@@ -930,25 +924,6 @@ function timelineWindow() {
     return { start, end };
 }
 
-function timelineGroupKey(date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, "0");
-    const day = String(date.getDate()).padStart(2, "0");
-    if (personalPreferences.timelineGrouping === "day") return `${year}-${month}-${day}`;
-    if (personalPreferences.timelineGrouping === "month") return `${year}-${month}`;
-    return String(year);
-}
-
-function timelineGroupLabel(key) {
-    if (key === "undated") return "Date non renseignée";
-    if (/^\d{4}-\d{2}-\d{2}$/.test(key)) return dateLabel(key);
-    if (/^\d{4}-\d{2}$/.test(key)) {
-        const [year, month] = key.split("-").map(Number);
-        return new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1));
-    }
-    return key;
-}
-
 function updateTimelinePeriod() {
     const { start, end } = timelineWindow();
     const label = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" });
@@ -1055,20 +1030,21 @@ function createActions(item) {
 function createTimelineEntry(item) {
     const card = document.createElement("article");
     card.className = `timeline-entry${item.type === "deadline" ? " deadline" : " document"}`;
-    const markerColor = item.timelineColor || (item.type === "deadline" ? item.color || "" : "");
+    const markerColor = item.type === "deadline" ? item.timelineColor || item.color || "" : "";
     if (markerColor) card.style.setProperty("--marker-color", markerColor);
     const open = document.createElement("button");
     open.type = "button";
     open.className = "timeline-entry-open";
     open.setAttribute("aria-label", `Ouvrir ${item.type === "deadline" ? "l’événement" : "le document"} ${timelineTitle(item) || "sans titre"}${parseTimelineDate(item) ? `, ${dateLabel(timelineDate(item))}` : ""}`);
     open.addEventListener("click", () => openReadModal(item));
+    const marker = document.createElement("span"); marker.className = "timeline-entry-marker"; marker.setAttribute("aria-hidden", "true");
     const kind = document.createElement("span"); kind.className = "timeline-kind"; kind.textContent = item.type === "deadline" ? "Échéance indépendante" : "Document";
     const title = document.createElement("strong"); title.className = "timeline-entry-title"; title.textContent = timelineTitle(item) || "Sans titre";
     const time = document.createElement("time");
     const date = parseTimelineDate(item);
     if (date) { time.dateTime = timelineDate(item); time.textContent = dateLabel(timelineDate(item)); }
     else time.textContent = "Date non renseignée";
-    open.append(kind, title, time);
+    open.append(marker, kind, title, time);
     const contentValue = timelineContent(item);
     if (contentValue) { const content = document.createElement("div"); content.className = "timeline-content"; renderMarkdownSummary(content, contentValue); card.append(content); }
     if (item.type === "document" && (item.theme || item.tags)) {
@@ -1092,26 +1068,6 @@ function renderUndatedItems(items) {
     const list = document.createElement("div"); list.className = "timeline-group-items";
     items.forEach((item) => list.append(createTimelineEntry(item)));
     section.append(heading, list); timelineContainer.append(section);
-}
-
-function renderGroupedTimeline(items, undated) {
-    const groups = new Map();
-    items.forEach((item) => {
-        const key = timelineGroupKey(parseTimelineDate(item));
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(item);
-    });
-    [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([key, entries]) => {
-        const section = document.createElement("section"); section.className = "timeline-group";
-        const heading = document.createElement("h2"); heading.className = "timeline-group-title"; heading.textContent = `${timelineGroupLabel(key)} `;
-        const count = document.createElement("small"); count.textContent = `${entries.length} élément${entries.length > 1 ? "s" : ""}`; heading.append(count);
-        const today = parseTimelineDate({ date: localDateValue(new Date()) });
-        if (key === timelineGroupKey(today)) { const badge = document.createElement("span"); badge.className = "timeline-today-badge"; badge.textContent = "· Aujourd’hui"; heading.append(badge); }
-        const list = document.createElement("div"); list.className = "timeline-group-items";
-        entries.forEach((item) => list.append(createTimelineEntry(item)));
-        section.append(heading, list); timelineContainer.append(section);
-    });
-    renderUndatedItems(undated);
 }
 
 function renderLineTimeline(items, undated, start, end) {
@@ -1189,7 +1145,6 @@ function renderLineTimeline(items, undated, start, end) {
 
 function renderTimeline() {
     timelineContainer.replaceChildren();
-    timelineScroll.classList.toggle("grouped-mode", personalPreferences.timelinePresentation === "grouped");
     updateTimelinePeriod();
     const { start, end } = timelineWindow();
     const withinPeriod = [];
@@ -1206,8 +1161,7 @@ function renderTimeline() {
         todayButton.addEventListener("click", () => { timelineAnchor = new Date(); savePersonalPreferences(); renderTimeline(); });
         empty.append(document.createElement("br"), todayButton); timelineContainer.append(empty); return;
     }
-    if (personalPreferences.timelinePresentation === "grouped") renderGroupedTimeline(withinPeriod, undated);
-    else renderLineTimeline(withinPeriod, undated, start, end);
+    renderLineTimeline(withinPeriod, undated, start, end);
 }
 
 function openTimelineForm(item) {
@@ -1597,16 +1551,6 @@ timelineScaleControl.addEventListener("change", () => {
     savePersonalPreferences();
     renderTimeline();
 });
-timelineGroupingControl.addEventListener("change", () => {
-    personalPreferences.timelineGrouping = timelineGroupingControl.value;
-    savePersonalPreferences();
-    renderTimeline();
-});
-timelinePresentationControl.addEventListener("change", () => {
-    personalPreferences.timelinePresentation = timelinePresentationControl.value;
-    savePersonalPreferences();
-    renderTimeline();
-});
 $("setting-theme").addEventListener("change", () => { personalPreferences.theme = $("setting-theme").value; savePersonalPreferences(); applyAppearance(); });
 $("setting-accent").addEventListener("change", () => { personalPreferences.accent = $("setting-accent").value; savePersonalPreferences(); applyAppearance(); });
 $("setting-timeline-view").addEventListener("change", () => {
@@ -1626,7 +1570,6 @@ $("reset-preferences").addEventListener("click", () => {
         localPreferencesAvailable = true;
     } catch { localPreferencesAvailable = false; }
     timelineScaleControl.value = personalPreferences.timelineView;
-    timelineGroupingControl.value = personalPreferences.timelineGrouping;
     applyAppearance();
     render();
     $("settings-status").textContent = localPreferencesAvailable
@@ -1636,8 +1579,6 @@ $("reset-preferences").addEventListener("click", () => {
 $("export-document-metadata").addEventListener("click", exportDocumentMetadata);
 
 timelineScaleControl.value = personalPreferences.timelineView;
-timelineGroupingControl.value = personalPreferences.timelineGrouping;
-timelinePresentationControl.value = personalPreferences.timelinePresentation;
 applyAppearance();
 $("btn-admin-users").addEventListener("click", async () => {
     if (!requireAdmin()) return;

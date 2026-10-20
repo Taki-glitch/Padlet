@@ -63,7 +63,8 @@ const RECENTLY_VIEWED_LIMIT = 6;
 const PERSONAL_PREFERENCES_KEY = "padlet-personal-preferences:v1";
 const timelineScaleControl = $("timeline-scale");
 const timelineGroupingControl = $("timeline-grouping");
-const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineView: "month", timelineGrouping: "month", timelineAnchor: "" };
+const timelinePresentationControl = $("timeline-presentation");
+const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineView: "month", timelineGrouping: "month", timelinePresentation: "line", timelineAnchor: "" };
 let localPreferencesAvailable = true;
 function personalPreferencesStorageKey(userId) { return userId ? `${PERSONAL_PREFERENCES_KEY}:${userId}` : ""; }
 function localDateValue(date) {
@@ -94,6 +95,7 @@ function loadPersonalPreferences(userId) {
         accent: ["indigo", "blue", "teal", "rose"].includes(stored.accent) ? stored.accent : PERSONAL_PREFERENCE_DEFAULTS.accent,
         timelineView: ["month", "year"].includes(stored.timelineView) ? stored.timelineView : PERSONAL_PREFERENCE_DEFAULTS.timelineView,
         timelineGrouping: ["day", "month", "year"].includes(stored.timelineGrouping) ? stored.timelineGrouping : PERSONAL_PREFERENCE_DEFAULTS.timelineGrouping,
+        timelinePresentation: ["line", "grouped"].includes(stored.timelinePresentation) ? stored.timelinePresentation : PERSONAL_PREFERENCE_DEFAULTS.timelinePresentation,
         timelineAnchor: storedAnchor ? localDateValue(storedAnchor) : localDateValue(new Date())
     };
 }
@@ -152,6 +154,7 @@ function applyAppearance() {
     $("setting-timeline-view").value = personalPreferences.timelineView;
     timelineScaleControl.value = personalPreferences.timelineView;
     timelineGroupingControl.value = personalPreferences.timelineGrouping;
+    timelinePresentationControl.value = personalPreferences.timelinePresentation;
 }
 
 function isAdmin() { return currentProfile?.role === "admin"; }
@@ -336,8 +339,18 @@ $("btn-sign-out").addEventListener("click", async () => {
 });
 
 function dateLabel(date) {
-    const parsed = new Date(`${date}T12:00:00`);
-    return Number.isNaN(parsed.getTime()) ? "Date non renseignée" : new Intl.DateTimeFormat("fr-FR", { dateStyle: "long" }).format(parsed);
+    const parsed = parseCivilDate(date);
+    return !parsed ? "Date non renseignée" : new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeZone: "UTC" }).format(parsed);
+}
+
+function parseCivilDate(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const [year, month, day] = value.split("-").map(Number);
+    if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
+    const parsed = new Date(0);
+    parsed.setUTCHours(0, 0, 0, 0);
+    parsed.setUTCFullYear(year, month - 1, day);
+    return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? parsed : null;
 }
 
 function formatTags(tags = "") { return tags.split(",").map((tag) => tag.trim()).filter(Boolean); }
@@ -534,21 +547,26 @@ function filteredItems() {
 }
 
 function addMonthsToDate(dateValue, months) {
-    if (!dateValue || !Number.isInteger(months) || months < 1) return null;
-    const [year, month, day] = dateValue.split("-").map(Number);
-    if (![year, month, day].every(Number.isFinite)) return null;
-    const target = new Date(Date.UTC(year, month - 1 + months, 1));
-    const lastDay = new Date(Date.UTC(target.getUTCFullYear(), target.getUTCMonth() + 1, 0)).getUTCDate();
-    target.setUTCDate(Math.min(day, lastDay));
-    return target.toISOString().slice(0, 10);
+    const source = parseCivilDate(dateValue);
+    if (!source || !Number.isInteger(months) || months < 1) return null;
+    const year = source.getUTCFullYear();
+    const month = source.getUTCMonth();
+    const day = source.getUTCDate();
+    const firstTargetDay = new Date(0);
+    firstTargetDay.setUTCHours(0, 0, 0, 0);
+    firstTargetDay.setUTCFullYear(year, month + months, 1);
+    const lastDay = new Date(firstTargetDay);
+    lastDay.setUTCMonth(lastDay.getUTCMonth() + 1, 0);
+    firstTargetDay.setUTCDate(Math.min(day, lastDay.getUTCDate()));
+    return firstTargetDay.toISOString().slice(0, 10);
 }
 
 function updateExpirationPreview() {
     const months = Number($("doc-retention").value);
     const expiresAt = addMonthsToDate($("doc-date").value, months);
     $("expiration-preview").textContent = expiresAt
-        ? `Expiration prévue : ${dateLabel(expiresAt)}.`
-        : months ? "Choisissez une date de publication valide pour calculer l’expiration." : "Ce document ne sera pas supprimé automatiquement.";
+        ? `${months} mois à partir de la date du document : ${dateLabel(expiresAt)}. Le document reste disponible jusqu’à la fin de cette date.`
+        : months ? "Choisissez une date du document valide pour calculer l’échéance." : "Aucune durée de conservation : ce document ne sera pas supprimé automatiquement.";
 }
 
 function formatMegabytes(bytes) { return `${(bytes / (1024 * 1024)).toLocaleString("fr-FR", { maximumFractionDigits: 1 })} Mo`; }
@@ -732,14 +750,33 @@ function renderThemes() {
 
 function expirationDate(item) {
     if (item.type !== "document") return "";
-    return item.expiresAt || addMonthsToDate(item.date, Number(item.retentionMonths));
+    if (item.expiresAt) return parseCivilDate(item.expiresAt) ? item.expiresAt : "";
+    return addMonthsToDate(item.date, Number(item.retentionMonths));
 }
 function daysUntil(dateValue) {
     if (!dateValue) return null;
-    const target = new Date(`${dateValue}T00:00:00`);
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    if (Number.isNaN(target.getTime())) return null;
-    return Math.round((target - today) / 86400000);
+    const target = parseCivilDate(dateValue);
+    if (!target) return null;
+    const now = new Date();
+    const today = new Date(0);
+    today.setUTCHours(0, 0, 0, 0);
+    today.setUTCFullYear(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+    return Math.round((target.getTime() - today.getTime()) / 86400000);
+}
+function expirationConsistency(item) {
+    if (item.type !== "document") return "";
+    const rawMonths = item.retentionMonths;
+    const hasExpiry = item.expiresAt !== undefined && item.expiresAt !== null && item.expiresAt !== "";
+    if (rawMonths === undefined || rawMonths === null || rawMonths === "") {
+        return hasExpiry ? "Durée de conservation absente alors qu’une date d’échéance est enregistrée." : "";
+    }
+    const months = Number(rawMonths);
+    const calculated = Number.isInteger(months) && months > 0 ? addMonthsToDate(item.date, months) : null;
+    if (!calculated) return "Durée ou date du document invalide : vérifiez l’échéance enregistrée.";
+    if (!hasExpiry || !parseCivilDate(item.expiresAt) || item.expiresAt !== calculated) {
+        return `Échéance incohérente : la durée de ${months} mois donne le ${dateLabel(calculated)}, mais la valeur enregistrée diffère.`;
+    }
+    return "";
 }
 function expirationLabel(item) {
     const days = daysUntil(expirationDate(item));
@@ -894,6 +931,8 @@ function createDocumentCard(item) {
         card.append(metadata);
     } else card.append(date);
     if (expiration) { const notice = document.createElement("p"); notice.className = "card-expiration"; notice.textContent = expiration; card.append(notice); }
+    const expiryWarning = expirationConsistency(item);
+    if (expiryWarning) { const warning = document.createElement("p"); warning.className = "expiration-warning"; warning.textContent = expiryWarning; card.append(warning); }
     card.append(summary);
     if (tags.childElementCount) card.append(tags);
     card.append(actions);
@@ -939,8 +978,144 @@ function createActions(item) {
     actions.append(edit, remove); return actions;
 }
 
+function createTimelineEntry(item) {
+    const card = document.createElement("article");
+    card.className = `timeline-entry${item.type === "deadline" ? " deadline" : " document"}`;
+    const markerColor = item.timelineColor || (item.type === "deadline" ? item.color || "" : "");
+    if (markerColor) card.style.setProperty("--marker-color", markerColor);
+    const open = document.createElement("button");
+    open.type = "button";
+    open.className = "timeline-entry-open";
+    open.setAttribute("aria-label", `Ouvrir ${item.type === "deadline" ? "l’événement" : "le document"} ${timelineTitle(item) || "sans titre"}${parseTimelineDate(item) ? `, ${dateLabel(timelineDate(item))}` : ""}`);
+    open.addEventListener("click", () => openReadModal(item));
+    const kind = document.createElement("span"); kind.className = "timeline-kind"; kind.textContent = item.type === "deadline" ? "Événement indépendant" : "Document";
+    const title = document.createElement("strong"); title.className = "timeline-entry-title"; title.textContent = timelineTitle(item) || "Sans titre";
+    const time = document.createElement("time");
+    const date = parseTimelineDate(item);
+    if (date) { time.dateTime = timelineDate(item); time.textContent = dateLabel(timelineDate(item)); }
+    else time.textContent = "Date non renseignée";
+    open.append(kind, title, time);
+    const contentValue = timelineContent(item);
+    if (contentValue) { const content = document.createElement("div"); content.className = "timeline-content"; renderMarkdownSummary(content, contentValue); card.append(content); }
+    if (item.type === "document" && (item.theme || item.tags)) {
+        const metadata = document.createElement("span"); metadata.className = "timeline-document-meta";
+        metadata.textContent = [displayTheme(item.theme), formatTags(item.tags).join(" · ")].filter(Boolean).join(" · ");
+        card.append(metadata);
+    }
+    card.prepend(open);
+    if (isAdmin()) {
+        const edit = document.createElement("button"); edit.type = "button"; edit.className = "timeline-edit"; edit.textContent = "Personnaliser la frise";
+        edit.addEventListener("click", () => openTimelineForm(item));
+        card.append(edit);
+    }
+    return card;
+}
+
+function renderUndatedItems(items) {
+    if (!items.length) return;
+    const section = document.createElement("section"); section.className = "timeline-undated";
+    const heading = document.createElement("h2"); heading.textContent = `Dates non fiables ou absentes (${items.length})`;
+    const list = document.createElement("div"); list.className = "timeline-group-items";
+    items.forEach((item) => list.append(createTimelineEntry(item)));
+    section.append(heading, list); timelineContainer.append(section);
+}
+
+function renderGroupedTimeline(items, undated) {
+    const groups = new Map();
+    items.forEach((item) => {
+        const key = timelineGroupKey(parseTimelineDate(item));
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
+    });
+    [...groups.entries()].sort(([a], [b]) => a.localeCompare(b)).forEach(([key, entries]) => {
+        const section = document.createElement("section"); section.className = "timeline-group";
+        const heading = document.createElement("h2"); heading.className = "timeline-group-title"; heading.textContent = `${timelineGroupLabel(key)} `;
+        const count = document.createElement("small"); count.textContent = `${entries.length} élément${entries.length > 1 ? "s" : ""}`; heading.append(count);
+        const today = parseTimelineDate({ date: localDateValue(new Date()) });
+        if (key === timelineGroupKey(today)) { const badge = document.createElement("span"); badge.className = "timeline-today-badge"; badge.textContent = "· Aujourd’hui"; heading.append(badge); }
+        const list = document.createElement("div"); list.className = "timeline-group-items";
+        entries.forEach((item) => list.append(createTimelineEntry(item)));
+        section.append(heading, list); timelineContainer.append(section);
+    });
+    renderUndatedItems(undated);
+}
+
+function renderLineTimeline(items, undated, start, end) {
+    const daysInPeriod = Math.round((Date.UTC(end.getFullYear(), end.getMonth(), end.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / 86400000);
+    const datedGroups = new Map();
+    items.forEach((item) => {
+        const date = timelineDate(item);
+        if (!datedGroups.has(date)) datedGroups.set(date, []);
+        datedGroups.get(date).push(item);
+    });
+    const groups = [...datedGroups.entries()].sort(([a], [b]) => a.localeCompare(b));
+    if (!groups.length) timelineContainer.append(createEmpty("Aucune entrée datée dans cette période. Utilisez Aujourd’hui ou choisissez une autre période."));
+    else {
+        const scroll = document.createElement("div"); scroll.className = "timeline-line-scroll"; scroll.tabIndex = 0; scroll.setAttribute("aria-label", "Frise chronologique défilable horizontalement");
+        const width = Math.max(900, daysInPeriod * 5, groups.length * 190);
+        const track = document.createElement("div"); track.className = "timeline-line-track"; track.style.width = `${width}px`;
+        const axis = document.createElement("div"); axis.className = "timeline-line-axis"; track.append(axis);
+        const layouts = [];
+        const ticks = personalPreferences.timelineView === "year" ? 12 : Math.ceil(daysInPeriod / 7);
+        for (let index = 0; index <= ticks; index += 1) {
+            const date = new Date(start); date.setDate(date.getDate() + (daysInPeriod * index / ticks));
+            const tick = document.createElement("span"); tick.className = "timeline-line-tick";
+            tick.style.left = `${(index / ticks) * 100}%`;
+            tick.textContent = personalPreferences.timelineView === "year"
+                ? new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(new Date(date.getFullYear(), date.getMonth(), 1))
+                : String(date.getDate());
+            track.append(tick);
+        }
+        const today = new Date();
+        if (today >= start && today < end) {
+            const todayPercent = (Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / (daysInPeriod * 86400000) * 100;
+            const todayMark = document.createElement("span"); todayMark.className = "timeline-line-today"; todayMark.style.left = `${todayPercent}%`; todayMark.setAttribute("aria-label", "Aujourd’hui"); track.append(todayMark);
+        }
+        const maxCardStackHeight = Math.min(320, Math.max(120, Math.max(...groups.map(([, entries]) => entries.length)) * 105));
+        const laneStep = Math.max(165, maxCardStackHeight + 35);
+        const laneEnds = [];
+        groups.forEach(([dateValue, entries]) => {
+            const [year, month, day] = dateValue.split("-").map(Number);
+            const date = parseTimelineDate({ date: dateValue });
+            if (!date) return;
+            const ratio = (Date.UTC(year, month - 1, day) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / (daysInPeriod * 86400000);
+            const x = 70 + ratio * (width - 140);
+            let lane = laneEnds.findIndex((endX) => endX <= x - laneStep);
+            if (lane < 0) { lane = laneEnds.length; laneEnds.push(x + laneStep); } else laneEnds[lane] = x + laneStep;
+            const marker = document.createElement("section"); marker.className = "timeline-line-date";
+            marker.style.left = `${x}px`; marker.style.setProperty("--timeline-lane", String(lane));
+            marker.classList.toggle("below", lane % 2 === 1);
+            const dot = document.createElement("span"); dot.className = "timeline-line-dot"; dot.setAttribute("aria-hidden", "true");
+            const dateHeading = document.createElement("h3"); dateHeading.textContent = dateLabel(dateValue);
+            const cards = document.createElement("div"); cards.className = "timeline-line-cards";
+            entries.forEach((item) => cards.append(createTimelineEntry(item)));
+            const content = document.createElement("div"); content.className = "timeline-line-date-content"; content.append(dateHeading, cards);
+            marker.append(dot, content); track.append(marker); layouts.push({ marker, lane });
+        });
+        const laneCount = Math.max(1, laneEnds.length);
+        const axisY = Math.ceil(laneCount / 2) * laneStep + 40;
+        const maxBelowLevel = laneCount > 1 ? Math.floor((laneCount - 1) / 2) : -1;
+        track.style.height = `${axisY + (maxBelowLevel >= 0 ? 28 + maxBelowLevel * laneStep + maxCardStackHeight + 40 : 55)}px`;
+        track.style.setProperty("--timeline-axis-y", `${axisY}px`);
+        layouts.forEach(({ marker, lane }) => {
+            const level = Math.floor(lane / 2);
+            const offset = lane % 2 === 0 ? -(level + 1) * laneStep + 10 : 28 + level * laneStep;
+            marker.style.top = `${axisY}px`;
+            marker.style.setProperty("--timeline-content-offset", `${offset}px`);
+        });
+        track.style.setProperty("--timeline-lanes", String(laneCount));
+        scroll.append(track); timelineContainer.append(scroll);
+        const anchor = parseLocalDate(localDateValue(timelineAnchor));
+        const anchorRatio = anchor ? (Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / (daysInPeriod * 86400000) : 0;
+        scroll.scrollLeft = Math.max(0, 70 + anchorRatio * (width - 140) - scroll.clientWidth / 2);
+        const legend = document.createElement("p"); legend.className = "timeline-line-help"; legend.textContent = "Les entrées sont placées dans l’ordre de leur date. Faites défiler horizontalement pour parcourir la période."; timelineContainer.append(legend);
+    }
+    renderUndatedItems(undated);
+}
+
 function renderTimeline() {
     timelineContainer.replaceChildren();
+    timelineScroll.classList.toggle("grouped-mode", personalPreferences.timelinePresentation === "grouped");
     updateTimelinePeriod();
     const { start, end } = timelineWindow();
     const withinPeriod = [];
@@ -951,64 +1126,14 @@ function renderTimeline() {
         else if (date >= start && date < end) withinPeriod.push(item);
     });
     withinPeriod.sort(sortTimelineByDate);
-    const groups = new Map();
-    withinPeriod.forEach((item) => {
-        const key = timelineGroupKey(parseTimelineDate(item));
-        if (!groups.has(key)) groups.set(key, []);
-        groups.get(key).push(item);
-    });
-    if (undated.length) groups.set("undated", undated);
-    if (!groups.size) {
+    if (!withinPeriod.length && !undated.length) {
         const empty = createEmpty("Aucun élément pour cette période. Revenez à aujourd’hui, choisissez une autre vue ou date, ou avancez/reculez dans le temps.");
-        const today = document.createElement("button"); today.type = "button"; today.textContent = "Revenir à aujourd’hui";
-        today.addEventListener("click", () => { timelineAnchor = new Date(); savePersonalPreferences(); renderTimeline(); });
-        empty.append(document.createElement("br"), today);
-        timelineContainer.append(empty);
-        return;
+        const todayButton = document.createElement("button"); todayButton.type = "button"; todayButton.textContent = "Revenir à aujourd’hui";
+        todayButton.addEventListener("click", () => { timelineAnchor = new Date(); savePersonalPreferences(); renderTimeline(); });
+        empty.append(document.createElement("br"), todayButton); timelineContainer.append(empty); return;
     }
-    [...groups.entries()].sort(([a], [b]) => a === "undated" ? 1 : b === "undated" ? -1 : a.localeCompare(b)).forEach(([key, entries]) => {
-        const section = document.createElement("section");
-        section.className = `timeline-group${key === "undated" ? " undated" : ""}`;
-        const heading = document.createElement("h2"); heading.className = "timeline-group-title";
-        heading.textContent = `${timelineGroupLabel(key)} `;
-        const count = document.createElement("small"); count.textContent = `${entries.length} élément${entries.length > 1 ? "s" : ""}`;
-        heading.append(count);
-        const todayKey = timelineGroupKey(new Date());
-        if (key === todayKey) {
-            const todayBadge = document.createElement("span"); todayBadge.className = "timeline-today-badge"; todayBadge.textContent = "· Aujourd’hui";
-            heading.append(todayBadge);
-        }
-        const list = document.createElement("div"); list.className = "timeline-group-items";
-        entries.forEach((item) => {
-        const marker = document.createElement("article");
-        marker.className = `timeline-marker ${item.type === "deadline" ? "deadline" : "document"}`;
-        marker.tabIndex = 0;
-        const markerColor = item.timelineColor || (item.type === "deadline" ? item.color || "#f97316" : "");
-        if (markerColor) { marker.style.setProperty("--marker-color", markerColor); marker.classList.add("custom-color"); }
-        const label = document.createElement("div"); label.className = "timeline-label";
-        const title = document.createElement("strong"); title.textContent = `${item.type === "deadline" ? "◆ " : ""}${timelineTitle(item)}`;
-        const time = document.createElement("time"); time.textContent = parseTimelineDate(item) ? dateLabel(timelineDate(item)) : "Date non renseignée";
-        const content = document.createElement("div"); content.className = "timeline-content"; renderMarkdownSummary(content, timelineContent(item));
-        const kind = document.createElement("span"); kind.className = "timeline-kind"; kind.textContent = item.type === "deadline" ? "Événement" : "Document";
-        label.append(kind, title, time, content);
-        if (item.type === "document" && (item.theme || item.tags)) {
-            const metadata = document.createElement("small"); metadata.className = "timeline-document-meta";
-            metadata.textContent = [displayTheme(item.theme), formatTags(item.tags).join(" · ")].filter(Boolean).join(" · ");
-            label.append(metadata);
-        }
-        if (isAdmin()) {
-            const edit = document.createElement("button"); edit.type = "button"; edit.className = "timeline-edit"; edit.textContent = "Modifier";
-            edit.addEventListener("click", (event) => { event.stopPropagation(); openTimelineForm(item); });
-            label.append(edit);
-        }
-        marker.append(label);
-        marker.addEventListener("click", () => { if (!isDragging) openReadModal(item); });
-        marker.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key) && event.target === marker) { event.preventDefault(); openReadModal(item); } });
-        list.append(marker);
-        });
-        section.append(heading, list);
-        timelineContainer.append(section);
-    });
+    if (personalPreferences.timelinePresentation === "grouped") renderGroupedTimeline(withinPeriod, undated);
+    else renderLineTimeline(withinPeriod, undated, start, end);
 }
 
 function openTimelineForm(item) {
@@ -1026,6 +1151,7 @@ function toggleTypeFields() {
     const isDocument = document.querySelector('input[name="item-type"]:checked').value === "document";
     $("document-fields").classList.toggle("hidden", !isDocument);
     $("deadline-fields").classList.toggle("hidden", isDocument);
+    $("doc-date-label").textContent = isDocument ? "Date du document" : "Date de l’échéance";
     $("doc-theme").required = isDocument;
     $("doc-summary").required = isDocument;
 }
@@ -1095,11 +1221,13 @@ docForm.addEventListener("submit", async (event) => {
         const file = type === "document" ? await uploadSelectedFile(id) : { fileUrl: "", filePath: "", fileName: "", fileType: "" };
         uploadedFilePath = $("doc-file").files[0] ? file.filePath : "";
         const oldFilePath = $("existing-file-path").value;
-        const retentionMonths = Number($("doc-retention").value);
+        const retentionValue = $("doc-retention").value;
+        const retentionMonths = retentionValue ? Number(retentionValue) : null;
+        if (type === "document" && retentionValue && (!Number.isSafeInteger(retentionMonths) || retentionMonths < 1)) throw new Error("Choisissez une durée de conservation valide.");
         const expiresAt = addMonthsToDate($("doc-date").value, retentionMonths);
-        if (type === "document" && retentionMonths && !expiresAt) throw new Error("La date d’expiration est invalide. Vérifiez la date et la durée de conservation.");
+        if (type === "document" && retentionMonths && !expiresAt) throw new Error("La date d’expiration est invalide. Vérifiez la date du document et la durée de conservation.");
         const item = type === "document"
-            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: canonicalTheme($("doc-theme").value), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths: retentionMonths || null, expiresAt, ...file }
+            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: canonicalTheme($("doc-theme").value), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths, expiresAt, ...file }
             : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim() };
         await setDoc(doc(db, "padletItems", id), item);
         if (type === "deadline" || (file.filePath && file.filePath !== oldFilePath)) await removeSupabaseFile(oldFilePath);
@@ -1223,6 +1351,9 @@ function openReadModal(item) {
     const expiry = expirationDate(item);
     $("read-expiration").textContent = expiry ? `Échéance : ${dateLabel(expiry)}` : "";
     $("read-expiration-wrap").classList.toggle("hidden", !expiry);
+    const expiryWarning = expirationConsistency(item);
+    $("read-expiration-warning").textContent = expiryWarning;
+    $("read-expiration-warning").classList.toggle("hidden", !expiryWarning);
     const readFavorite = $("read-favorite");
     readFavorite.classList.toggle("hidden", item.type !== "document");
     updateReadFavoriteButton();
@@ -1397,6 +1528,11 @@ timelineGroupingControl.addEventListener("change", () => {
     savePersonalPreferences();
     renderTimeline();
 });
+timelinePresentationControl.addEventListener("change", () => {
+    personalPreferences.timelinePresentation = timelinePresentationControl.value;
+    savePersonalPreferences();
+    renderTimeline();
+});
 $("setting-theme").addEventListener("change", () => { personalPreferences.theme = $("setting-theme").value; savePersonalPreferences(); applyAppearance(); });
 $("setting-accent").addEventListener("change", () => { personalPreferences.accent = $("setting-accent").value; savePersonalPreferences(); applyAppearance(); });
 $("setting-timeline-view").addEventListener("change", () => {
@@ -1426,6 +1562,7 @@ $("reset-preferences").addEventListener("click", () => {
 
 timelineScaleControl.value = personalPreferences.timelineView;
 timelineGroupingControl.value = personalPreferences.timelineGrouping;
+timelinePresentationControl.value = personalPreferences.timelinePresentation;
 applyAppearance();
 $("btn-admin-users").addEventListener("click", async () => {
     if (!requireAdmin()) return;
@@ -1495,7 +1632,7 @@ window.addEventListener("keydown", (event) => {
     }
 });
 
-timelineScroll.addEventListener("mousedown", (event) => { isDragging = false; dragStartX = event.pageX - timelineScroll.offsetLeft; startScrollLeft = timelineScroll.scrollLeft; timelineScroll.classList.add("dragging"); });
+timelineScroll.addEventListener("mousedown", (event) => { if (event.target.closest(".timeline-line-scroll")) return; isDragging = false; dragStartX = event.pageX - timelineScroll.offsetLeft; startScrollLeft = timelineScroll.scrollLeft; timelineScroll.classList.add("dragging"); });
 timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.classList.contains("dragging")) return; event.preventDefault(); const distance = (event.pageX - timelineScroll.offsetLeft) - dragStartX; if (Math.abs(distance) > 4) isDragging = true; timelineScroll.scrollLeft = startScrollLeft - distance; });
 ["mouseup", "mouseleave"].forEach((name) => timelineScroll.addEventListener(name, () => { timelineScroll.classList.remove("dragging"); setTimeout(() => { isDragging = false; }, 0); }));
 

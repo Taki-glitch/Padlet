@@ -22,6 +22,14 @@ Firestore `publishedAt` (ISO), `retentionMonths` et `expiresAt` (`YYYY-MM-DD`). 
 anciens documents restent valides car ces champs sont facultatifs. La date de la frise
 reste le champ existant `date`.
 
+La durée part de la date documentaire `date`, pas de la date de téléversement
+`publishedAt`. L'ajout de mois suit le calendrier civil et utilise le dernier jour du
+mois cible lorsque le jour d'origine n'existe pas (par exemple le 31 janvier + 1 mois
+= le 28 ou 29 février). `expiresAt` est une date civile UTC : le document reste
+disponible pendant toute cette date, puis la purge quotidienne le traite au passage
+suivant. Les dates et durées incohérentes sont ignorées par la purge et signalées pour
+vérification ; elles ne sont pas corrigées en masse.
+
 L'expiration est exécutée côté serveur, même sans navigateur ouvert. Déployez d'abord
 la fonction et ses secrets, puis appliquez la migration :
 
@@ -41,7 +49,8 @@ select vault.create_secret('VOTRE_SERVICE_ROLE_KEY', 'service_role_key');
 
 Le cron appelle quotidiennement la fonction à 00:15 UTC. La fonction demande un jeton
 OAuth au compte de service Firebase stocké dans les secrets, cherche les documents dont
-`expiresAt` est atteint, supprime d'abord leur objet Storage puis leur document
+`expiresAt` est antérieur à la date UTC du jour et vérifie que `date`, `retentionMonths`
+et `expiresAt` concordent. Elle supprime ensuite leur objet Storage puis leur document
 Firestore. Si Storage échoue, Firestore est conservé et le prochain cron réessaie.
 Le compte de service Firebase doit avoir le rôle minimal permettant de lire/supprimer
 les documents Firestore (par exemple **Cloud Datastore User**). Le `service_role` reste

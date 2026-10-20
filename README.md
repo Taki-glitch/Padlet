@@ -1,5 +1,38 @@
 # Padlet
 
+## Fiabilité et contrôles Phase 11
+
+Les tests isolés s’exécutent avec Node.js (sans accès à Firebase ou Supabase) :
+
+```sh
+node --test tests/phase11.test.mjs
+```
+
+Avant de déployer la fonction `admin-users` modifiée, donnez au compte de service
+Firebase existant la permission `firebaseauth.users.update` nécessaire à la
+révocation des jetons de renouvellement. Le rôle IAM Firebase Authentication Admin
+contient cette permission ; ne donnez pas de rôle plus large que nécessaire.
+La révocation ne rend pas immédiatement invalides les ID tokens déjà émis : les
+règles et leur durée de validité continuent à s’appliquer jusqu’à leur expiration.
+
+La migration `20261020000000_preserve_last_admin.sql` ajoute une protection
+transactionnelle contre la rétrogradation ou suppression du dernier administrateur.
+Elle doit être revue et appliquée manuellement dans le SQL Editor avant de dépendre
+de cette protection. Elle n’a pas été appliquée à un environnement distant. Les
+appels de purge planifiée doivent continuer à fournir le bearer `service_role` déjà
+conservé dans Vault ; une exécution partielle renvoie maintenant HTTP 500 et un
+résumé exploitable dans les journaux Edge Function.
+
+Les avertissements d’incohérence sont calculés dans le navigateur à partir de
+`date`, `retentionMonths` et `expiresAt`, champs déjà lisibles par tout utilisateur
+connecté selon les règles Firestore actuelles. L’interface les réserve aux admins,
+mais empêcher un lecteur techniquement déterminé de recalculer ces valeurs
+nécessiterait de changer les droits de lecture ou de déplacer l’audit côté serveur ;
+aucune de ces modifications d’accès n’est incluse ici.
+
+L’export Phase 11 sauvegarde les métadonnées, dont `filePath` et `fileUrl`, mais
+pas les objets Storage eux-mêmes. Il ne suffit donc pas à restaurer les fichiers.
+
 Application web statique de mur de documents. Firebase Firestore conserve les
 métadonnées dans la collection `padletItems`; Supabase Storage stocke les fichiers
 dans le bucket `documents`.

@@ -9,20 +9,29 @@ const firebaseConfig = {
 };
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, deleteDoc, deleteField, onSnapshot } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { getAuth, getIdTokenResult, signInWithCustomToken, signOut as firebaseSignOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase-config.js";
+import { addRetentionMonths as addMonthsToDate, dateLabel, daysUntil, isDueForPurge, parseCivilDate } from "./supabase/functions/_shared/expiration.mjs";
+import { buildTimelineTicks, timelineDateRatio } from "./modules/timeline.mjs";
+import { personalPreferencesStorageKey, readPersonalPreferences, writePersonalPreferences } from "./modules/preferences.mjs";
+import { createAuthGateway, hasAdminRole, normalizeUsername } from "./modules/auth.mjs";
+import { deleteDocumentAndFile, PartialDocumentDeletionError } from "./modules/data.mjs";
+import { buildMetadataExportPayload } from "./modules/admin.mjs";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 const firebaseAuth = getAuth(app);
 const itemsCollection = collection(db, "padletItems");
 const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const authGateway = supabase ? createAuthGateway(supabase) : null;
 let items = [];
 let isDragging = false;
 let dragStartX = 0;
 let startScrollLeft = 0;
+let timelineDragTarget = null;
+let suppressTimelineClick = false;
 
 const $ = (id) => document.getElementById(id);
 const btnTheme = $("btn-theme");
@@ -60,11 +69,9 @@ const recentlyViewedSection = $("recently-viewed");
 const recentlyViewedList = $("recently-viewed-list");
 const DISPLAY_MODE_KEY = "padlet-display-mode";
 const RECENTLY_VIEWED_LIMIT = 6;
-const PERSONAL_PREFERENCES_KEY = "padlet-personal-preferences:v1";
 const timelineScaleControl = $("timeline-scale");
 const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineView: "month", timelineAnchor: "" };
 let localPreferencesAvailable = true;
-function personalPreferencesStorageKey(userId) { return userId ? `${PERSONAL_PREFERENCES_KEY}:${userId}` : ""; }
 function localDateValue(date) {
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
@@ -75,25 +82,17 @@ function parseLocalDate(value) {
     return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
 }
 function loadPersonalPreferences(userId) {
-    const key = personalPreferencesStorageKey(userId);
-    let raw = "{}";
     try {
-        raw = key ? localStorage.getItem(key) || "{}" : "{}";
-        localPreferencesAvailable = true;
+        const result = readPersonalPreferences(userId, PERSONAL_PREFERENCE_DEFAULTS, (value) => {
+            const anchor = parseLocalDate(value);
+            return anchor ? localDateValue(anchor) : null;
+        }, { storage: window.localStorage, fallbackAnchor: localDateValue(new Date()) });
+        localPreferencesAvailable = result.storageAvailable;
+        return result.preferences;
     } catch {
         localPreferencesAvailable = false;
         return { ...PERSONAL_PREFERENCE_DEFAULTS, timelineAnchor: localDateValue(new Date()) };
     }
-    let parsed = {};
-    try { parsed = JSON.parse(raw); } catch { /* Des préférences mal formées reviennent aux valeurs sûres. */ }
-    const stored = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-    const storedAnchor = parseLocalDate(stored.timelineAnchor);
-    return {
-        theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : PERSONAL_PREFERENCE_DEFAULTS.theme,
-        accent: ["indigo", "blue", "teal", "rose"].includes(stored.accent) ? stored.accent : PERSONAL_PREFERENCE_DEFAULTS.accent,
-        timelineView: ["month", "year"].includes(stored.timelineView) ? stored.timelineView : PERSONAL_PREFERENCE_DEFAULTS.timelineView,
-        timelineAnchor: storedAnchor ? localDateValue(storedAnchor) : localDateValue(new Date())
-    };
 }
 let personalPreferences = loadPersonalPreferences(null);
 let timelineAnchor = parseLocalDate(personalPreferences.timelineAnchor) || new Date();
@@ -104,6 +103,8 @@ let displayMode = (() => {
 let readModalItem = null;
 let readModalReturnFocus = null;
 let readModalReturnView = "themes";
+let docFormBaseline = "";
+let timelineFormBaseline = "";
 let selectionMode = false;
 const selectedDocumentIds = new Set();
 const STORAGE_LIMIT_BYTES = 50 * 1024 * 1024;
@@ -114,28 +115,16 @@ let currentProfile = null;
 let firebaseSessionUserId = null;
 let firebaseSessionRole = null;
 
-// Supabase utilise une adresse technique non distribuable. L'utilisateur ne saisit
-// jamais cette adresse : elle est reconstruite ici avec la même convention que les
-// Edge Functions (voir README).
-const TECHNICAL_EMAIL_DOMAIN = "auth.padlet.invalid";
-function normalizeUsername(value) { return value.trim().toLowerCase(); }
-function technicalEmail(username) {
-    const normalized = normalizeUsername(username);
-    return normalized.includes("@") ? normalized : `${normalized}@${TECHNICAL_EMAIL_DOMAIN}`;
-}
-
 function setStatus(message, isError = false) {
     status.textContent = message;
     status.classList.toggle("error", isError);
 }
 
 function savePersonalPreferences() {
-    const key = personalPreferencesStorageKey(currentUser?.id);
-    if (!key) return;
+    if (!currentUser?.id) return;
     personalPreferences.timelineAnchor = localDateValue(timelineAnchor);
     try {
-        localStorage.setItem(key, JSON.stringify(personalPreferences));
-        localPreferencesAvailable = true;
+        localPreferencesAvailable = writePersonalPreferences(currentUser.id, personalPreferences, window.localStorage);
     } catch {
         localPreferencesAvailable = false;
         $("settings-status").textContent = "Préférence non enregistrée : le stockage local est indisponible.";
@@ -151,7 +140,7 @@ function applyAppearance() {
     timelineScaleControl.value = personalPreferences.timelineView;
 }
 
-function isAdmin() { return currentProfile?.role === "admin"; }
+function isAdmin() { return hasAdminRole(currentProfile); }
 
 function favoritesStorageKey() { return currentUser?.id ? `padlet-favorites:${currentUser.id}` : ""; }
 function favoriteIds() {
@@ -200,13 +189,15 @@ function renderRecentlyViewed() {
         button.addEventListener("click", () => openReadModal(item));
         recentlyViewedList.append(button);
     });
-    recentlyViewedSection.classList.toggle("hidden", recent.length === 0);
+    recentlyViewedSection.classList.toggle("hidden", recent.length === 0 || viewThemes.classList.contains("hidden"));
 }
 
 function applyRoleUi() {
     $("btn-add").classList.toggle("hidden", !isAdmin());
     $("btn-admin-users").classList.toggle("hidden", !isAdmin());
     $("admin-backup-panel").classList.toggle("hidden", !isAdmin());
+    selectModeButton.classList.toggle("hidden", !isAdmin());
+    if (!isAdmin()) { selectionMode = false; selectedDocumentIds.clear(); }
     formModal.classList.add("hidden");
     timelineFormModal.classList.add("hidden");
     updateSelectionToolbar();
@@ -233,12 +224,6 @@ function setAuthenticatedUi(user, profile = null) {
     applyRoleUi();
 }
 
-async function loadCurrentProfile(user) {
-    const { data, error } = await supabase.from("profiles").select("username, role").eq("id", user.id).maybeSingle();
-    if (error || !data || !["admin", "user"].includes(data.role)) throw new Error("Profil utilisateur introuvable.");
-    return data;
-}
-
 function requireAdmin() {
     if (isAdmin()) return true;
     setStatus("Cette action est réservée aux administrateurs.", true);
@@ -248,7 +233,7 @@ function requireAdmin() {
 async function refreshAdminFirestoreSession() {
     const { data: { session }, error } = await supabase.auth.getSession();
     if (error || !session || session.user.id !== currentUser?.id) throw new Error("Session Supabase invalide. Reconnectez-vous.");
-    const profile = await loadCurrentProfile(session.user);
+    const profile = await authGateway.loadProfile(session.user);
     currentProfile = profile;
     if (!isAdmin()) {
         applyRoleUi();
@@ -256,7 +241,7 @@ async function refreshAdminFirestoreSession() {
     }
     // Reissue the Firebase token before a mutation so a role change cannot leave
     // an administrator with a stale Firebase claim (or vice versa).
-    await startFirestoreSession(session);
+    if (firebaseSessionUserId !== session.user.id || firebaseSessionRole !== "admin") await startFirestoreSession(session);
     if (firebaseSessionUserId !== session.user.id || firebaseSessionRole !== "admin") {
         throw new Error("Session Firebase administrateur invalide. Reconnectez-vous.");
     }
@@ -307,7 +292,7 @@ async function initialiseAuthentication() {
     const { data: { session } } = await supabase.auth.getSession();
     if (!session) { setAuthenticatedUi(null); setStatus("Connectez-vous pour accéder au tableau."); return; }
     try {
-        setAuthenticatedUi(session.user, await loadCurrentProfile(session.user));
+        setAuthenticatedUi(session.user, await authGateway.loadProfile(session.user));
         await startFirestoreSession(session);
     }
     catch (error) { console.error(error); setStatus("La connexion Firebase sécurisée a échoué. Contactez un administrateur.", true); }
@@ -321,9 +306,9 @@ $("auth-form").addEventListener("submit", async (event) => {
     $("auth-error").textContent = "";
     submit.disabled = true;
     try {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: technicalEmail(username), password });
+        const { data, error } = await authGateway.signInWithUsername(username, password);
         if (error) throw error;
-        setAuthenticatedUi(data.user, await loadCurrentProfile(data.user));
+        setAuthenticatedUi(data.user, await authGateway.loadProfile(data.user));
         const { data: { session } } = await supabase.auth.getSession();
         await startFirestoreSession(session);
     } catch (error) { console.error(error); $("auth-error").textContent = "Identifiant ou mot de passe incorrect, ou connexion indisponible."; }
@@ -333,21 +318,6 @@ $("auth-form").addEventListener("submit", async (event) => {
 $("btn-sign-out").addEventListener("click", async () => {
     await signOutCurrentUser();
 });
-
-function dateLabel(date) {
-    const parsed = parseCivilDate(date);
-    return !parsed ? "Date non renseignée" : new Intl.DateTimeFormat("fr-FR", { dateStyle: "long", timeZone: "UTC" }).format(parsed);
-}
-
-function parseCivilDate(value) {
-    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-    const [year, month, day] = value.split("-").map(Number);
-    if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return null;
-    const parsed = new Date(0);
-    parsed.setUTCHours(0, 0, 0, 0);
-    parsed.setUTCFullYear(year, month - 1, day);
-    return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? parsed : null;
-}
 
 function formatTags(tags = "") { return tags.split(",").map((tag) => tag.trim()).filter(Boolean); }
 
@@ -542,26 +512,12 @@ function filteredItems() {
     });
 }
 
-function addMonthsToDate(dateValue, months) {
-    const source = parseCivilDate(dateValue);
-    if (!source || !Number.isInteger(months) || months < 1) return null;
-    const year = source.getUTCFullYear();
-    const month = source.getUTCMonth();
-    const day = source.getUTCDate();
-    const firstTargetDay = new Date(0);
-    firstTargetDay.setUTCHours(0, 0, 0, 0);
-    firstTargetDay.setUTCFullYear(year, month + months, 1);
-    const lastDay = new Date(firstTargetDay);
-    lastDay.setUTCMonth(lastDay.getUTCMonth() + 1, 0);
-    firstTargetDay.setUTCDate(Math.min(day, lastDay.getUTCDate()));
-    return firstTargetDay.toISOString().slice(0, 10);
-}
-
 function updateExpirationPreview() {
     const months = Number($("doc-retention").value);
     const expiresAt = addMonthsToDate($("doc-date").value, months);
+    const isPast = expiresAt && isDueForPurge(expiresAt, new Date().toISOString().slice(0, 10));
     $("expiration-preview").textContent = expiresAt
-        ? `${months} mois à partir de la date du document : ${dateLabel(expiresAt)}. Le document reste disponible jusqu’à la fin de cette date.`
+        ? `${months} mois à partir de la date du document : ${dateLabel(expiresAt)}. Le document reste disponible jusqu’à la fin de cette date.${isPast ? " Cette date est déjà passée ; une confirmation sera demandée avant l’enregistrement." : ""}`
         : months ? "Choisissez une date du document valide pour calculer l’échéance." : "Aucune durée de conservation : ce document ne sera pas supprimé automatiquement.";
 }
 
@@ -682,7 +638,7 @@ function updateSelectionToolbar() {
 }
 
 function setSelectionMode(enabled) {
-    selectionMode = Boolean(enabled);
+    selectionMode = Boolean(enabled) && isAdmin();
     if (!selectionMode) selectedDocumentIds.clear();
     updateSelectionToolbar();
     renderThemes();
@@ -750,16 +706,6 @@ function expirationDate(item) {
     if (item.expiresAt) return parseCivilDate(item.expiresAt) ? item.expiresAt : "";
     return addMonthsToDate(item.date, Number(item.retentionMonths));
 }
-function daysUntil(dateValue) {
-    if (!dateValue) return null;
-    const target = parseCivilDate(dateValue);
-    if (!target) return null;
-    const now = new Date();
-    const today = new Date(0);
-    today.setUTCHours(0, 0, 0, 0);
-    today.setUTCFullYear(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-    return Math.round((target.getTime() - today.getTime()) / 86400000);
-}
 function expirationConsistency(item) {
     if (item.type !== "document") return "";
     const rawMonths = item.retentionMonths;
@@ -814,7 +760,27 @@ function renderAdminExpirationReview() {
                     ? "Échéance valable jusqu’à la fin de cette date ; la purge quotidienne intervient lors d’un passage ultérieur."
                     : `Échéance à venir : le document ne doit pas être purgé avant le ${dateLabel(item.expiresAt)}.`;
         state.textContent = warning ? `${warning} ${schedule}` : schedule;
-        row.append(title, details, state); container.append(row);
+        row.append(title, details, state);
+        if (warning && isCivilDate(item.date) && Number.isSafeInteger(months) && months > 0) {
+            const correctedDate = addMonthsToDate(item.date, months);
+            if (correctedDate) {
+                const repair = document.createElement("button"); repair.type = "button"; repair.textContent = "Recalculer l’échéance";
+                repair.addEventListener("click", async () => {
+                    const past = isDueForPurge(correctedDate, localDateValue(new Date()));
+                    const confirmation = `Remplacer ${item.expiresAt || "aucune date enregistrée"} par ${correctedDate}${past ? " (déjà passée : la purge pourra supprimer le document lors de son prochain passage)" : ""} ?`;
+                    if (!window.confirm(confirmation)) return;
+                    repair.disabled = true;
+                    try {
+                        await refreshAdminFirestoreSession();
+                        await setDoc(doc(db, "padletItems", item.id), { expiresAt: correctedDate }, { merge: true });
+                        setStatus(`Échéance corrigée au ${dateLabel(correctedDate)}.`);
+                    } catch (error) { console.error("Correction d’échéance impossible.", error); setStatus("Impossible de corriger l’échéance.", true); }
+                    finally { repair.disabled = false; }
+                });
+                row.append(repair);
+            }
+        }
+        container.append(row);
     });
 }
 function buildMetadataExportPayload(documents, generatedAt = new Date()) {
@@ -847,7 +813,7 @@ async function exportDocumentMetadata() {
         download.download = `padlet-metadonnees-${new Date().toISOString().slice(0, 10)}.json`;
         download.click();
         window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
-        status.textContent = `Export créé : ${documents.length} document${documents.length === 1 ? "" : "s"}. Aucun fichier ni lien de stockage n’est inclus.`;
+        status.textContent = `Export créé : ${documents.length} document${documents.length === 1 ? "" : "s"}. Il contient les métadonnées et chemins/URL des fichiers, pas les objets eux-mêmes ; il ne constitue pas une sauvegarde complète des fichiers.`;
     } catch (error) {
         console.error("Export des métadonnées impossible.", error);
         status.textContent = error instanceof Error && error.message ? error.message : "L’export n’a pas pu être généré.";
@@ -980,7 +946,7 @@ function createDocumentCard(item) {
         card.append(metadata);
     } else card.append(date);
     if (expiration) { const notice = document.createElement("p"); notice.className = "card-expiration"; notice.textContent = expiration; card.append(notice); }
-    const expiryWarning = expirationConsistency(item);
+    const expiryWarning = isAdmin() ? expirationConsistency(item) : "";
     if (expiryWarning) { const warning = document.createElement("p"); warning.className = "expiration-warning"; warning.textContent = expiryWarning; card.append(warning); }
     card.append(summary);
     if (tags.childElementCount) card.append(tags);
@@ -1084,34 +1050,34 @@ function renderLineTimeline(items, undated, start, end) {
         const scroll = document.createElement("div"); scroll.className = "timeline-line-scroll"; scroll.tabIndex = 0; scroll.setAttribute("aria-label", "Frise chronologique défilable horizontalement");
         const width = Math.max(900, daysInPeriod * 5, groups.length * 190);
         const track = document.createElement("div"); track.className = "timeline-line-track"; track.style.width = `${width}px`;
+        timelineContainer.append(scroll);
+        scroll.append(track);
         const axis = document.createElement("div"); axis.className = "timeline-line-axis"; track.append(axis);
         const layouts = [];
-        const ticks = personalPreferences.timelineView === "year" ? 12 : Math.ceil(daysInPeriod / 7);
-        for (let index = 0; index <= ticks; index += 1) {
-            const date = new Date(start); date.setDate(date.getDate() + (daysInPeriod * index / ticks));
-            const tick = document.createElement("span"); tick.className = "timeline-line-tick";
-            tick.style.left = `${(index / ticks) * 100}%`;
-            tick.textContent = personalPreferences.timelineView === "year"
-                ? new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(new Date(date.getFullYear(), date.getMonth(), 1))
-                : String(date.getDate());
-            track.append(tick);
-        }
+        const ticks = buildTimelineTicks(start, end, personalPreferences.timelineView);
+        ticks.forEach((tick) => {
+            const tickMark = document.createElement("span"); tickMark.className = "timeline-line-tick";
+            const ratio = timelineDateRatio(tick.date, start, end);
+            tickMark.style.left = `${70 + ratio * (width - 140)}px`;
+            tickMark.textContent = personalPreferences.timelineView === "year"
+                ? new Intl.DateTimeFormat("fr-FR", { month: "short" }).format(new Date(start.getFullYear(), tick.month, 1))
+                : String(tick.day);
+            track.append(tickMark);
+        });
         const today = new Date();
         if (today >= start && today < end) {
-            const todayPercent = (Date.UTC(today.getFullYear(), today.getMonth(), today.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / (daysInPeriod * 86400000) * 100;
-            const todayMark = document.createElement("span"); todayMark.className = "timeline-line-today"; todayMark.style.left = `${todayPercent}%`; todayMark.setAttribute("aria-label", "Aujourd’hui"); track.append(todayMark);
+            const todayRatio = timelineDateRatio(localDateValue(today), start, end);
+            const todayMark = document.createElement("span"); todayMark.className = "timeline-line-today"; todayMark.style.left = `${70 + todayRatio * (width - 140)}px`; todayMark.setAttribute("aria-label", "Aujourd’hui"); track.append(todayMark);
         }
-        const maxCardStackHeight = Math.min(320, Math.max(120, Math.max(...groups.map(([, entries]) => entries.length)) * 105));
-        const laneStep = Math.max(165, maxCardStackHeight + 35);
+        let laneStep = 165;
         const laneEnds = [];
         groups.forEach(([dateValue, entries]) => {
-            const [year, month, day] = dateValue.split("-").map(Number);
             const date = parseTimelineDate({ date: dateValue });
             if (!date) return;
-            const ratio = (Date.UTC(year, month - 1, day) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / (daysInPeriod * 86400000);
+            const ratio = timelineDateRatio(dateValue, start, end);
             const x = 70 + ratio * (width - 140);
-            let lane = laneEnds.findIndex((endX) => endX <= x - laneStep);
-            if (lane < 0) { lane = laneEnds.length; laneEnds.push(x + laneStep); } else laneEnds[lane] = x + laneStep;
+            let lane = laneEnds.findIndex((endX) => endX <= x - 190);
+            if (lane < 0) { lane = laneEnds.length; laneEnds.push(x + 190); } else laneEnds[lane] = x + 190;
             const marker = document.createElement("section"); marker.className = "timeline-line-date";
             marker.style.left = `${x}px`; marker.style.setProperty("--timeline-lane", String(lane));
             marker.classList.toggle("below", lane % 2 === 1);
@@ -1120,12 +1086,22 @@ function renderLineTimeline(items, undated, start, end) {
             const cards = document.createElement("div"); cards.className = "timeline-line-cards";
             entries.forEach((item) => cards.append(createTimelineEntry(item)));
             const content = document.createElement("div"); content.className = "timeline-line-date-content"; content.append(dateHeading, cards);
-            marker.append(dot, content); track.append(marker); layouts.push({ marker, lane });
+            marker.append(dot, content); track.append(marker); layouts.push({ marker, lane, x });
+        });
+        const maxContentHeight = Math.max(0, ...layouts.map(({ marker }) => marker.querySelector(".timeline-line-date-content").scrollHeight));
+        laneStep = Math.max(165, maxContentHeight + 35);
+        laneEnds.length = 0;
+        layouts.forEach((layout) => {
+            let lane = laneEnds.findIndex((endX) => endX <= layout.x - 190);
+            if (lane < 0) { lane = laneEnds.length; laneEnds.push(layout.x + 190); } else laneEnds[lane] = layout.x + 190;
+            layout.lane = lane;
+            layout.marker.style.setProperty("--timeline-lane", String(lane));
+            layout.marker.classList.toggle("below", lane % 2 === 1);
         });
         const laneCount = Math.max(1, laneEnds.length);
         const axisY = Math.ceil(laneCount / 2) * laneStep + 40;
         const maxBelowLevel = laneCount > 1 ? Math.floor((laneCount - 1) / 2) : -1;
-        track.style.height = `${axisY + (maxBelowLevel >= 0 ? 28 + maxBelowLevel * laneStep + maxCardStackHeight + 40 : 55)}px`;
+        track.style.height = `${axisY + (maxBelowLevel >= 0 ? 28 + maxBelowLevel * laneStep + maxContentHeight + 40 : 55)}px`;
         track.style.setProperty("--timeline-axis-y", `${axisY}px`);
         layouts.forEach(({ marker, lane }) => {
             const level = Math.floor(lane / 2);
@@ -1134,9 +1110,8 @@ function renderLineTimeline(items, undated, start, end) {
             marker.style.setProperty("--timeline-content-offset", `${offset}px`);
         });
         track.style.setProperty("--timeline-lanes", String(laneCount));
-        scroll.append(track); timelineContainer.append(scroll);
         const anchor = parseLocalDate(localDateValue(timelineAnchor));
-        const anchorRatio = anchor ? (Date.UTC(anchor.getFullYear(), anchor.getMonth(), anchor.getDate()) - Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())) / (daysInPeriod * 86400000) : 0;
+        const anchorRatio = anchor ? timelineDateRatio(localDateValue(anchor), start, end) : 0;
         scroll.scrollLeft = Math.max(0, 70 + anchorRatio * (width - 140) - scroll.clientWidth / 2);
         const legend = document.createElement("p"); legend.className = "timeline-line-help"; legend.textContent = "Les entrées sont placées dans l’ordre de leur date. Faites défiler horizontalement pour parcourir la période."; timelineContainer.append(legend);
     }
@@ -1164,6 +1139,21 @@ function renderTimeline() {
     renderLineTimeline(withinPeriod, undated, start, end);
 }
 
+function formSnapshot(form) {
+    return JSON.stringify([...form.elements].map((control) => ({
+        name: control.name || control.id,
+        value: control.value,
+        checked: control.checked,
+        files: control.files ? [...control.files].map((file) => `${file.name}:${file.size}:${file.lastModified}`) : []
+    })));
+}
+
+function closeFormIfConfirmed(modal, form, baseline) {
+    if (!modal.classList.contains("hidden") && formSnapshot(form) !== baseline && !window.confirm("Des modifications ne sont pas enregistrées. Fermer sans les enregistrer ?")) return false;
+    modal.classList.add("hidden");
+    return true;
+}
+
 function openTimelineForm(item) {
     if (!requireAdmin()) return;
     $("timeline-item-id").value = item.id;
@@ -1171,6 +1161,7 @@ function openTimelineForm(item) {
     $("timeline-title").value = timelineTitle(item);
     $("timeline-content").value = timelineContent(item);
     $("timeline-color").value = item.timelineColor || "";
+    timelineFormBaseline = formSnapshot(timelineForm);
     timelineFormModal.classList.remove("hidden");
     $("timeline-date").focus();
 }
@@ -1200,6 +1191,7 @@ function openForm(item = null) {
     $("deadline-color").value = item?.color || "#f97316"; $("deadline-description").value = item?.description || "";
     $("modal-title").textContent = item ? `Modifier ${item.type === "deadline" ? "l'échéance" : "le document"}` : "Ajouter un élément";
     toggleTypeFields(); updateExpirationPreview(); formModal.classList.remove("hidden"); $("doc-title").focus();
+    docFormBaseline = formSnapshot(docForm);
 }
 
 function canonicalTheme(value) {
@@ -1232,9 +1224,10 @@ async function uploadSelectedFile(id) {
 }
 
 async function removeSupabaseFile(filePath, throwOnError = false) {
-    if (!supabase || !filePath || filePath.startsWith("padlet-files/")) return;
+    if (!supabase || !filePath || filePath.startsWith("padlet-files/")) return false;
     const { error } = await supabase.storage.from("documents").remove([filePath]);
-    if (error) { console.warn("Le fichier Supabase n'a pas pu être supprimé.", error); if (throwOnError) throw error; }
+    if (error) { console.warn("Le fichier Supabase n'a pas pu être supprimé.", error); if (throwOnError) throw error; return false; }
+    return true;
 }
 
 docForm.addEventListener("submit", async (event) => {
@@ -1242,6 +1235,20 @@ docForm.addEventListener("submit", async (event) => {
     if (!requireAdmin()) return;
     const type = document.querySelector('input[name="item-type"]:checked').value;
     const id = $("doc-id").value || doc(itemsCollection).id;
+    const retentionValue = $("doc-retention").value;
+    const retentionMonths = retentionValue ? Number(retentionValue) : null;
+    if (type === "document" && retentionValue && (!Number.isSafeInteger(retentionMonths) || retentionMonths < 1)) {
+        setStatus("Choisissez une durée de conservation valide.", true);
+        return;
+    }
+    const expiresAt = type === "document" && retentionMonths ? addMonthsToDate($("doc-date").value, retentionMonths) : null;
+    if (type === "document" && retentionMonths && !expiresAt) {
+        setStatus("La date d’expiration est invalide. Vérifiez la date du document et la durée de conservation.", true);
+        return;
+    }
+    if (expiresAt && isDueForPurge(expiresAt, localDateValue(new Date()))) {
+        if (!window.confirm(`La date d’expiration calculée est déjà passée (${dateLabel(expiresAt)}). La purge serveur pourra traiter ce document après son enregistrement. Voulez-vous continuer ?`)) return;
+    }
     const submit = $("submit-item"); submit.disabled = true; submit.textContent = "Enregistrement…";
     let uploadedFilePath = "";
     try {
@@ -1249,15 +1256,10 @@ docForm.addEventListener("submit", async (event) => {
         const file = type === "document" ? await uploadSelectedFile(id) : { fileUrl: "", filePath: "", fileName: "", fileType: "" };
         uploadedFilePath = $("doc-file").files[0] ? file.filePath : "";
         const oldFilePath = $("existing-file-path").value;
-        const retentionValue = $("doc-retention").value;
-        const retentionMonths = retentionValue ? Number(retentionValue) : null;
-        if (type === "document" && retentionValue && (!Number.isSafeInteger(retentionMonths) || retentionMonths < 1)) throw new Error("Choisissez une durée de conservation valide.");
-        const expiresAt = addMonthsToDate($("doc-date").value, retentionMonths);
-        if (type === "document" && retentionMonths && !expiresAt) throw new Error("La date d’expiration est invalide. Vérifiez la date du document et la durée de conservation.");
         const item = type === "document"
-            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: canonicalTheme($("doc-theme").value), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths, expiresAt, ...file }
-            : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim() };
-        await setDoc(doc(db, "padletItems", id), item);
+            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: canonicalTheme($("doc-theme").value), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths, expiresAt, color: deleteField(), description: deleteField(), ...file }
+            : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim(), theme: deleteField(), tags: deleteField(), summary: deleteField(), content: deleteField(), publishedAt: deleteField(), retentionMonths: deleteField(), expiresAt: deleteField(), fileUrl: deleteField(), filePath: deleteField(), fileName: deleteField(), fileType: deleteField(), fileSize: deleteField() };
+        await setDoc(doc(db, "padletItems", id), item, { merge: true });
         if (type === "deadline" || (file.filePath && file.filePath !== oldFilePath)) await removeSupabaseFile(oldFilePath);
         formModal.classList.add("hidden"); setStatus("Élément enregistré en ligne."); await refreshStorageUsage();
     } catch (error) {
@@ -1307,11 +1309,13 @@ async function removeItem(item) {
     } catch (error) { console.error(error); setStatus("La suppression a échoué.", true); }
 }
 
-async function deleteItemRecord(item) {
+async function deleteItemRecord(item, { sessionChecked = false } = {}) {
     if (!requireAdmin()) throw new Error("Cette action est réservée aux administrateurs.");
-    await refreshAdminFirestoreSession();
-    await removeSupabaseFile(item.filePath, true);
-    await deleteDoc(doc(db, "padletItems", item.id));
+    if (!sessionChecked) await refreshAdminFirestoreSession();
+    return deleteDocumentAndFile(item, {
+        removeFile: (filePath) => removeSupabaseFile(filePath, true),
+        deleteMetadata: () => deleteDoc(doc(db, "padletItems", item.id))
+    });
 }
 
 async function removeSelectedDocuments() {
@@ -1334,13 +1338,14 @@ async function removeSelectedDocuments() {
     const deletedIds = new Set();
     const failures = [];
     try {
+        await refreshAdminFirestoreSession();
         for (const item of selected) {
             try {
-                await deleteItemRecord(item);
+                await deleteItemRecord(item, { sessionChecked: true });
                 deletedIds.add(item.id);
             } catch (error) {
                 console.error(`Suppression impossible pour « ${item.title || item.id} ».`, error);
-                failures.push(item);
+                failures.push({ item, partial: error instanceof PartialDocumentDeletionError });
             }
         }
         if (deletedIds.size) {
@@ -1350,12 +1355,15 @@ async function removeSelectedDocuments() {
         render();
         await refreshStorageUsage();
         if (failures.length) {
-            const failedTitles = failures.map((item) => item.title || "Sans titre").join(", ");
+            const failedTitles = failures.map(({ item, partial }) => `${item.title || "Sans titre"}${partial ? " (fichier déjà supprimé ; relancer la suppression pour retirer la fiche)" : ""}`).join(", ");
             const deletedMessage = deletedIds.size ? `${deletedIds.size} document${deletedIds.size === 1 ? "" : "s"} supprimé${deletedIds.size === 1 ? "" : "s"}. ` : "Aucun document n’a pu être supprimé. ";
             setStatus(`${deletedMessage}${failures.length} échec${failures.length === 1 ? "" : "s"} : ${failedTitles}. Les fiches en échec restent sélectionnées ; un fichier associé a pu être supprimé avant l’échec Firestore.`, true);
         } else {
             setStatus(`${deletedIds.size} document${deletedIds.size === 1 ? "" : "s"} supprimé${deletedIds.size === 1 ? "" : "s"}.`);
         }
+    } catch (error) {
+        console.error("Suppression groupée impossible.");
+        setStatus(error instanceof Error && error.message ? error.message : "Suppression groupée impossible.", true);
     } finally {
         deleteSelectedButton.disabled = false;
         deleteSelectedButton.textContent = "Supprimer la sélection";
@@ -1379,7 +1387,7 @@ function openReadModal(item) {
     const expiry = expirationDate(item);
     $("read-expiration").textContent = expiry ? `Échéance : ${dateLabel(expiry)}` : "";
     $("read-expiration-wrap").classList.toggle("hidden", !expiry);
-    const expiryWarning = expirationConsistency(item);
+    const expiryWarning = isAdmin() ? expirationConsistency(item) : "";
     $("read-expiration-warning").textContent = expiryWarning;
     $("read-expiration-warning").classList.toggle("hidden", !expiryWarning);
     const readFavorite = $("read-favorite");
@@ -1476,10 +1484,10 @@ async function renderAdminUsers() {
             });
             const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "Mot de passe";
             reset.addEventListener("click", async () => {
-                const password = window.prompt(`Nouveau mot de passe pour ${user.username} (8 caractères minimum) :`);
-                if (password === null) return;
-                try { await callAdminUsers("reset-password", { id: user.id, password }); setAdminUsersStatus(`Mot de passe de ${user.username} réinitialisé.`); }
-                catch (error) { console.error(error); setAdminUsersStatus("Impossible de réinitialiser le mot de passe.", true); }
+                $("admin-reset-user-id").value = user.id;
+                $("admin-reset-password-title").textContent = `Nouveau mot de passe pour ${user.username}`;
+                $("admin-reset-password-form").classList.remove("hidden");
+                $("admin-reset-password").focus();
             });
             const remove = document.createElement("button"); remove.type = "button"; remove.className = "delete"; remove.textContent = "Supprimer"; remove.disabled = user.id === currentUser?.id;
             remove.addEventListener("click", async () => {
@@ -1585,6 +1593,23 @@ $("btn-admin-users").addEventListener("click", async () => {
     $("admin-users-modal").classList.remove("hidden"); setAdminUsersStatus(""); await renderAdminUsers();
 });
 $("close-admin-users").addEventListener("click", () => $("admin-users-modal").classList.add("hidden"));
+$("cancel-password-reset").addEventListener("click", () => { $("admin-reset-password-form").reset(); $("admin-reset-password-form").classList.add("hidden"); });
+$("admin-reset-password-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!requireAdmin()) return;
+    const form = event.currentTarget;
+    const passwordInput = $("admin-reset-password");
+    const password = passwordInput.value;
+    const id = $("admin-reset-user-id").value;
+    try {
+        await callAdminUsers("reset-password", { id, password });
+        setAdminUsersStatus("Mot de passe réinitialisé.");
+        form.reset(); form.classList.add("hidden");
+    } catch (error) {
+        setAdminUsersStatus(error instanceof Error ? error.message : "Impossible de réinitialiser le mot de passe.", true);
+        passwordInput.value = "";
+    }
+});
 $("admin-create-user-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     if (!requireAdmin()) return;
@@ -1616,9 +1641,14 @@ $("read-favorite").addEventListener("click", () => {
     updateReadFavoriteButton();
 });
 $("doc-date").addEventListener("change", updateExpirationPreview); $("doc-retention").addEventListener("change", updateExpirationPreview);
-$("close-form").addEventListener("click", () => formModal.classList.add("hidden")); $("close-read").addEventListener("click", closeReadModal);
-$("close-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden")); $("cancel-timeline-form").addEventListener("click", () => timelineFormModal.classList.add("hidden"));
-window.addEventListener("click", (event) => { if (event.target === formModal) formModal.classList.add("hidden"); if (event.target === readModal) closeReadModal(); if (event.target === timelineFormModal) timelineFormModal.classList.add("hidden"); if (event.target === $("admin-users-modal")) $("admin-users-modal").classList.add("hidden"); });
+$("close-form").addEventListener("click", () => closeFormIfConfirmed(formModal, docForm, docFormBaseline)); $("close-read").addEventListener("click", closeReadModal);
+$("close-timeline-form").addEventListener("click", () => closeFormIfConfirmed(timelineFormModal, timelineForm, timelineFormBaseline)); $("cancel-timeline-form").addEventListener("click", () => closeFormIfConfirmed(timelineFormModal, timelineForm, timelineFormBaseline));
+window.addEventListener("click", (event) => {
+    if (event.target === formModal) closeFormIfConfirmed(formModal, docForm, docFormBaseline);
+    if (event.target === readModal) closeReadModal();
+    if (event.target === timelineFormModal) closeFormIfConfirmed(timelineFormModal, timelineForm, timelineFormBaseline);
+    if (event.target === $("admin-users-modal")) $("admin-users-modal").classList.add("hidden");
+});
 window.addEventListener("keydown", (event) => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         const target = event.target;
@@ -1632,7 +1662,7 @@ window.addEventListener("keydown", (event) => {
         return;
     }
     if (event.key === "Escape") {
-        formModal.classList.add("hidden"); closeReadModal(); timelineFormModal.classList.add("hidden"); $("admin-users-modal").classList.add("hidden");
+        closeFormIfConfirmed(formModal, docForm, docFormBaseline); closeReadModal(); closeFormIfConfirmed(timelineFormModal, timelineForm, timelineFormBaseline); $("admin-users-modal").classList.add("hidden");
         return;
     }
     if (event.key !== "Tab" || readModal.classList.contains("hidden")) return;
@@ -1648,10 +1678,61 @@ window.addEventListener("keydown", (event) => {
     }
 });
 
-timelineScroll.addEventListener("mousedown", (event) => { if (event.target.closest(".timeline-line-scroll")) return; isDragging = false; dragStartX = event.pageX - timelineScroll.offsetLeft; startScrollLeft = timelineScroll.scrollLeft; timelineScroll.classList.add("dragging"); });
-timelineScroll.addEventListener("mousemove", (event) => { if (!timelineScroll.classList.contains("dragging")) return; event.preventDefault(); const distance = (event.pageX - timelineScroll.offsetLeft) - dragStartX; if (Math.abs(distance) > 4) isDragging = true; timelineScroll.scrollLeft = startScrollLeft - distance; });
-["mouseup", "mouseleave"].forEach((name) => timelineScroll.addEventListener(name, () => { timelineScroll.classList.remove("dragging"); setTimeout(() => { isDragging = false; }, 0); }));
+timelineScroll.addEventListener("mousedown", (event) => {
+    if (event.button !== 0 || event.target.closest("button, a, input, select, textarea")) return;
+    timelineDragTarget = event.target.closest(".timeline-line-scroll") || timelineScroll;
+    dragStartX = event.pageX;
+    startScrollLeft = timelineDragTarget.scrollLeft;
+    isDragging = false;
+});
+window.addEventListener("mousemove", (event) => {
+    if (!timelineDragTarget) return;
+    const distance = event.pageX - dragStartX;
+    if (Math.abs(distance) > 4) {
+        isDragging = true;
+        timelineDragTarget.classList.add("dragging");
+        event.preventDefault();
+        timelineDragTarget.scrollLeft = startScrollLeft - distance;
+    }
+});
+window.addEventListener("mouseup", () => {
+    if (!timelineDragTarget) return;
+    timelineDragTarget.classList.remove("dragging");
+    if (isDragging) {
+        suppressTimelineClick = true;
+        window.setTimeout(() => { suppressTimelineClick = false; }, 50);
+    }
+    timelineDragTarget = null;
+    isDragging = false;
+});
+timelineScroll.addEventListener("click", (event) => {
+    if (!suppressTimelineClick || !event.target.closest(".timeline-entry-open, .timeline-edit")) return;
+    event.preventDefault(); event.stopImmediatePropagation();
+}, true);
 
 function itemOrExistingPublishedAt(id) { return items.find((item) => item.id === id)?.publishedAt || new Date().toISOString(); }
+
+if (supabase) {
+    supabase.auth.onAuthStateChange((event, session) => {
+        window.setTimeout(async () => {
+            if (event === "SIGNED_OUT" && !session && currentUser) {
+                unsubscribeItems?.(); unsubscribeItems = null;
+                items = []; firebaseSessionUserId = null; firebaseSessionRole = null;
+                await firebaseSignOut(firebaseAuth);
+                setAuthenticatedUi(null);
+                setStatus("Votre session a été fermée. Connectez-vous pour accéder au tableau.");
+                return;
+            }
+            if (!["SIGNED_IN", "TOKEN_REFRESHED", "USER_UPDATED"].includes(event) || !session || session.user.id === currentUser?.id) return;
+            try {
+                setAuthenticatedUi(session.user, await authGateway.loadProfile(session.user));
+                await startFirestoreSession(session);
+            } catch (error) {
+                console.error("Changement de session impossible.");
+                await signOutCurrentUser("La session a changé mais n’a pas pu être restaurée. Reconnectez-vous.");
+            }
+        }, 0);
+    });
+}
 
 initialiseAuthentication();

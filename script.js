@@ -94,7 +94,7 @@ function loadPersonalPreferences(userId) {
         theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : PERSONAL_PREFERENCE_DEFAULTS.theme,
         accent: ["indigo", "blue", "teal", "rose"].includes(stored.accent) ? stored.accent : PERSONAL_PREFERENCE_DEFAULTS.accent,
         timelineView: ["month", "year"].includes(stored.timelineView) ? stored.timelineView : PERSONAL_PREFERENCE_DEFAULTS.timelineView,
-        timelineGrouping: ["day", "month", "year"].includes(stored.timelineGrouping) ? stored.timelineGrouping : PERSONAL_PREFERENCE_DEFAULTS.timelineGrouping,
+        timelineGrouping: ["month", "year"].includes(stored.timelineGrouping) ? stored.timelineGrouping : PERSONAL_PREFERENCE_DEFAULTS.timelineGrouping,
         timelinePresentation: ["line", "grouped"].includes(stored.timelinePresentation) ? stored.timelinePresentation : PERSONAL_PREFERENCE_DEFAULTS.timelinePresentation,
         timelineAnchor: storedAnchor ? localDateValue(storedAnchor) : localDateValue(new Date())
     };
@@ -988,7 +988,7 @@ function createTimelineEntry(item) {
     open.className = "timeline-entry-open";
     open.setAttribute("aria-label", `Ouvrir ${item.type === "deadline" ? "l’événement" : "le document"} ${timelineTitle(item) || "sans titre"}${parseTimelineDate(item) ? `, ${dateLabel(timelineDate(item))}` : ""}`);
     open.addEventListener("click", () => openReadModal(item));
-    const kind = document.createElement("span"); kind.className = "timeline-kind"; kind.textContent = item.type === "deadline" ? "Événement indépendant" : "Document";
+    const kind = document.createElement("span"); kind.className = "timeline-kind"; kind.textContent = item.type === "deadline" ? "Échéance indépendante" : "Document";
     const title = document.createElement("strong"); title.className = "timeline-entry-title"; title.textContent = timelineTitle(item) || "Sans titre";
     const time = document.createElement("time");
     const date = parseTimelineDate(item);

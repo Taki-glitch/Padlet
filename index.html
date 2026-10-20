@@ -84,8 +84,10 @@
                 <button id="timeline-previous" type="button" aria-label="Période précédente">← Précédent</button>
                 <button id="timeline-today" type="button">Aujourd’hui</button>
                 <button id="timeline-next" type="button" aria-label="Période suivante">Suivant →</button>
-                <label>Échelle <select id="timeline-scale"><option value="day">Jour</option><option value="month">Mois</option><option value="year">Année</option><option value="decade">Décennie</option></select></label>
+                <label>Vue <select id="timeline-scale"><option value="month">Mois</option><option value="year">Année</option></select></label>
                 <label>Grouper par <select id="timeline-grouping"><option value="day">Jour</option><option value="month">Mois</option><option value="year">Année</option></select></label>
+                <label>Aller à une date <input id="timeline-date-target" type="date"></label>
+                <button id="timeline-go-date" type="button">Afficher cette période</button>
                 <strong id="timeline-period" aria-live="polite"></strong>
             </div>
             <div class="timeline-help">Les documents sont affichés selon leur date de frise ou leur date documentaire. Les éléments sans date restent accessibles à part.</div>
@@ -103,7 +105,8 @@
             </section>
             <section class="settings-panel" aria-labelledby="timeline-settings-title">
                 <h3 id="timeline-settings-title">Frise</h3>
-                <p>L’échelle et le regroupement choisis dans la frise sont conservés localement.</p>
+                <label>Vue par défaut <select id="setting-timeline-view"><option value="month">Mois</option><option value="year">Année</option></select></label>
+                <p>La dernière période consultée et le regroupement choisi sont conservés localement.</p>
             </section>
             <section class="settings-panel" aria-labelledby="general-settings-title">
                 <h3 id="general-settings-title">Général</h3>

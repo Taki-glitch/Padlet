@@ -109,6 +109,15 @@
                 <label>Vue par défaut <select id="setting-timeline-view"><option value="month">Mois</option><option value="year">Année</option></select></label>
                 <p>La dernière période consultée et le regroupement choisi sont conservés localement.</p>
             </section>
+            <section id="admin-backup-panel" class="settings-panel hidden" aria-labelledby="admin-backup-title">
+                <h3 id="admin-backup-title">Sauvegarde et échéances</h3>
+                <p>L’export JSON contient les métadonnées de base des documents. Il exclut le contenu, les résumés, les liens de fichiers et les données d’authentification ; ce n’est pas une sauvegarde des fichiers.</p>
+                <button id="export-document-metadata" type="button">Exporter les métadonnées (JSON)</button>
+                <p id="backup-export-status" role="status" aria-live="polite"></p>
+                <h4>Échéances de suppression automatique</h4>
+                <p>Consultation en lecture seule. Une échéance modifiée n’est prise en compte qu’après enregistrement cohérent de la date documentaire, de la durée et de la date d’expiration. Cette vue ne lance jamais la purge.</p>
+                <div id="admin-expiration-list" class="admin-expiration-list" aria-live="polite"></div>
+            </section>
             <section class="settings-panel" aria-labelledby="general-settings-title">
                 <h3 id="general-settings-title">Général</h3>
                 <p>Padlet · version non déclarée</p>

@@ -28,9 +28,11 @@ const $ = (id) => document.getElementById(id);
 const btnTheme = $("btn-theme");
 const btnTimeline = $("btn-timeline");
 const btnDashboard = $("btn-dashboard");
+const btnSettings = $("btn-settings");
 const viewThemes = $("view-themes");
 const viewTimeline = $("view-timeline");
 const viewDashboard = $("view-dashboard");
+const viewSettings = $("view-settings");
 const timelineContainer = $("timeline-container");
 const timelineScroll = $("timeline-scroll");
 const formModal = $("form-modal");
@@ -58,6 +60,23 @@ const recentlyViewedSection = $("recently-viewed");
 const recentlyViewedList = $("recently-viewed-list");
 const DISPLAY_MODE_KEY = "padlet-display-mode";
 const RECENTLY_VIEWED_LIMIT = 6;
+const PERSONAL_PREFERENCES_KEY = "padlet-personal-preferences:v1";
+const timelineScaleControl = $("timeline-scale");
+const timelineGroupingControl = $("timeline-grouping");
+const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineScale: "month", timelineGrouping: "month" };
+function loadPersonalPreferences() {
+    try {
+        const stored = JSON.parse(localStorage.getItem(PERSONAL_PREFERENCES_KEY) || "{}");
+        return {
+            theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : PERSONAL_PREFERENCE_DEFAULTS.theme,
+            accent: ["indigo", "blue", "teal", "rose"].includes(stored.accent) ? stored.accent : PERSONAL_PREFERENCE_DEFAULTS.accent,
+            timelineScale: ["day", "month", "year", "decade"].includes(stored.timelineScale) ? stored.timelineScale : PERSONAL_PREFERENCE_DEFAULTS.timelineScale,
+            timelineGrouping: ["day", "month", "year"].includes(stored.timelineGrouping) ? stored.timelineGrouping : PERSONAL_PREFERENCE_DEFAULTS.timelineGrouping
+        };
+    } catch { return { ...PERSONAL_PREFERENCE_DEFAULTS }; }
+}
+let personalPreferences = loadPersonalPreferences();
+let timelineAnchor = new Date();
 let displayMode = (() => {
     try { return localStorage.getItem(DISPLAY_MODE_KEY) === "list" ? "list" : "grid"; }
     catch { return "grid"; }
@@ -88,6 +107,18 @@ function technicalEmail(username) {
 function setStatus(message, isError = false) {
     status.textContent = message;
     status.classList.toggle("error", isError);
+}
+
+function savePersonalPreferences() {
+    try { localStorage.setItem(PERSONAL_PREFERENCES_KEY, JSON.stringify(personalPreferences)); }
+    catch { $("settings-status").textContent = "Préférence non enregistrée dans ce navigateur."; }
+}
+
+function applyAppearance() {
+    document.body.dataset.theme = personalPreferences.theme;
+    document.body.dataset.accent = personalPreferences.accent;
+    $("setting-theme").value = personalPreferences.theme;
+    $("setting-accent").value = personalPreferences.accent;
 }
 
 function isAdmin() { return currentProfile?.role === "admin"; }
@@ -732,7 +763,49 @@ function timelineDate(item) { return item.timelineDate || item.date; }
 function timelineTitle(item) { return item.timelineTitle || item.title; }
 function timelineBaseContent(item) { return item.type === "document" ? (item.summary || "") : (item.description || ""); }
 function timelineContent(item) { return item.timelineContent || timelineBaseContent(item); }
-function sortTimelineByDate(a, b) { return new Date(timelineDate(a)) - new Date(timelineDate(b)); }
+function parseTimelineDate(item) {
+    const value = timelineDate(item);
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(`${value}T12:00:00`);
+    return Number.isNaN(date.getTime()) || date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day ? null : date;
+}
+function sortTimelineByDate(a, b) { return (parseTimelineDate(a)?.getTime() ?? Infinity) - (parseTimelineDate(b)?.getTime() ?? Infinity); }
+
+function timelineWindow() {
+    const start = new Date(timelineAnchor.getFullYear(), timelineAnchor.getMonth(), timelineAnchor.getDate());
+    const end = new Date(start);
+    if (personalPreferences.timelineScale === "day") { start.setDate(start.getDate() - 7); end.setDate(end.getDate() + 8); }
+    else if (personalPreferences.timelineScale === "month") { start.setDate(1); start.setMonth(start.getMonth() - 6); end.setDate(1); end.setMonth(end.getMonth() + 7); }
+    else if (personalPreferences.timelineScale === "year") { start.setMonth(0, 1); start.setFullYear(start.getFullYear() - 4); end.setMonth(0, 1); end.setFullYear(end.getFullYear() + 6); }
+    else { const decade = Math.floor(start.getFullYear() / 10) * 10; start.setFullYear(decade - 10, 0, 1); end.setFullYear(decade + 10, 0, 1); }
+    return { start, end };
+}
+
+function timelineGroupKey(date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    if (personalPreferences.timelineGrouping === "day") return `${year}-${month}-${day}`;
+    if (personalPreferences.timelineGrouping === "month") return `${year}-${month}`;
+    return String(year);
+}
+
+function timelineGroupLabel(key) {
+    if (key === "undated") return "Date non renseignée";
+    if (/^\d{4}-\d{2}-\d{2}$/.test(key)) return dateLabel(key);
+    if (/^\d{4}-\d{2}$/.test(key)) {
+        const [year, month] = key.split("-").map(Number);
+        return new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric" }).format(new Date(year, month - 1, 1));
+    }
+    return key;
+}
+
+function updateTimelinePeriod() {
+    const { start, end } = timelineWindow();
+    const label = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" });
+    $("timeline-period").textContent = `${label.format(start)} – ${label.format(new Date(end.getTime() - 86400000))} · Aujourd’hui : ${label.format(new Date())}`;
+}
 
 function createDocumentCard(item) {
     const card = document.createElement("article");
@@ -830,25 +903,61 @@ function createActions(item) {
 
 function renderTimeline() {
     timelineContainer.replaceChildren();
-    const sorted = [...filteredItems()].sort(sortTimelineByDate);
-    if (!sorted.length) {
-        const hasCriteria = Boolean(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value);
-        timelineContainer.append(createEmpty(hasCriteria ? "Aucun élément ne correspond à vos critères. Réinitialisez les filtres pour tout afficher." : "Votre frise apparaîtra ici."));
+    updateTimelinePeriod();
+    const { start, end } = timelineWindow();
+    const withinPeriod = [];
+    const undated = [];
+    filteredItems().forEach((item) => {
+        const date = parseTimelineDate(item);
+        if (!date) undated.push(item);
+        else if (date >= start && date < end) withinPeriod.push(item);
+    });
+    withinPeriod.sort(sortTimelineByDate);
+    const groups = new Map();
+    withinPeriod.forEach((item) => {
+        const key = timelineGroupKey(parseTimelineDate(item));
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(item);
+    });
+    if (undated.length) groups.set("undated", undated);
+    if (!groups.size) {
+        const empty = createEmpty("Aucun élément pour cette période. Vous pouvez revenir à aujourd’hui, changer l’échelle ou avancer/reculer dans le temps.");
+        const today = document.createElement("button"); today.type = "button"; today.textContent = "Revenir à aujourd’hui";
+        today.addEventListener("click", () => { timelineAnchor = new Date(); renderTimeline(); });
+        empty.append(document.createElement("br"), today);
+        timelineContainer.append(empty);
         return;
     }
-    const width = Math.max(900, 230 + (sorted.length - 1) * 230);
-    timelineContainer.style.setProperty("--timeline-width", `${width}px`);
-    sorted.forEach((item, index) => {
+    [...groups.entries()].sort(([a], [b]) => a === "undated" ? 1 : b === "undated" ? -1 : a.localeCompare(b)).forEach(([key, entries]) => {
+        const section = document.createElement("section");
+        section.className = `timeline-group${key === "undated" ? " undated" : ""}`;
+        const heading = document.createElement("h2"); heading.className = "timeline-group-title";
+        heading.textContent = `${timelineGroupLabel(key)} `;
+        const count = document.createElement("small"); count.textContent = `${entries.length} élément${entries.length > 1 ? "s" : ""}`;
+        heading.append(count);
+        const todayKey = timelineGroupKey(new Date());
+        if (key === todayKey) {
+            const todayBadge = document.createElement("span"); todayBadge.className = "timeline-today-badge"; todayBadge.textContent = "· Aujourd’hui";
+            heading.append(todayBadge);
+        }
+        const list = document.createElement("div"); list.className = "timeline-group-items";
+        entries.forEach((item) => {
         const marker = document.createElement("article");
         marker.className = `timeline-marker ${item.type === "deadline" ? "deadline" : "document"}`;
-        marker.style.left = `${index === 0 ? 7 : 7 + (index / Math.max(1, sorted.length - 1)) * 86}%`;
+        marker.tabIndex = 0;
         const markerColor = item.timelineColor || (item.type === "deadline" ? item.color || "#f97316" : "");
         if (markerColor) { marker.style.setProperty("--marker-color", markerColor); marker.classList.add("custom-color"); }
         const label = document.createElement("div"); label.className = "timeline-label";
         const title = document.createElement("strong"); title.textContent = `${item.type === "deadline" ? "◆ " : ""}${timelineTitle(item)}`;
-        const time = document.createElement("time"); time.textContent = dateLabel(timelineDate(item));
+        const time = document.createElement("time"); time.textContent = parseTimelineDate(item) ? dateLabel(timelineDate(item)) : "Date non renseignée";
         const content = document.createElement("div"); content.className = "timeline-content"; renderMarkdownSummary(content, timelineContent(item));
-        label.append(title, time, content);
+        const kind = document.createElement("span"); kind.className = "timeline-kind"; kind.textContent = item.type === "deadline" ? "Événement" : "Document";
+        label.append(kind, title, time, content);
+        if (item.type === "document" && (item.theme || item.tags)) {
+            const metadata = document.createElement("small"); metadata.className = "timeline-document-meta";
+            metadata.textContent = [displayTheme(item.theme), formatTags(item.tags).join(" · ")].filter(Boolean).join(" · ");
+            label.append(metadata);
+        }
         if (isAdmin()) {
             const edit = document.createElement("button"); edit.type = "button"; edit.className = "timeline-edit"; edit.textContent = "Modifier";
             edit.addEventListener("click", (event) => { event.stopPropagation(); openTimelineForm(item); });
@@ -856,7 +965,11 @@ function renderTimeline() {
         }
         marker.append(label);
         marker.addEventListener("click", () => { if (!isDragging) openReadModal(item); });
-        timelineContainer.append(marker);
+        marker.addEventListener("keydown", (event) => { if (["Enter", " "].includes(event.key) && event.target === marker) { event.preventDefault(); openReadModal(item); } });
+        list.append(marker);
+        });
+        section.append(heading, list);
+        timelineContainer.append(section);
     });
 }
 
@@ -1194,24 +1307,68 @@ function setView(view) {
         ? "timeline"
         : view === "dashboard"
             ? "dashboard"
+            : view === "settings"
+                ? "settings"
             : "themes";
 
     btnTheme.classList.toggle("active", selected === "themes");
     btnTimeline.classList.toggle("active", selected === "timeline");
     btnDashboard.classList.toggle("active", selected === "dashboard");
+    btnSettings.classList.toggle("active", selected === "settings");
     btnTheme.setAttribute("aria-current", selected === "themes" ? "page" : "false");
     btnTimeline.setAttribute("aria-current", selected === "timeline" ? "page" : "false");
     btnDashboard.setAttribute("aria-current", selected === "dashboard" ? "page" : "false");
+    btnSettings.setAttribute("aria-current", selected === "settings" ? "page" : "false");
 
     viewThemes.classList.toggle("hidden", selected !== "themes");
     viewTimeline.classList.toggle("hidden", selected !== "timeline");
     viewDashboard.classList.toggle("hidden", selected !== "dashboard");
+    viewSettings.classList.toggle("hidden", selected !== "settings");
     recentlyViewedSection.classList.toggle("hidden", selected !== "themes" || recentlyViewedList.childElementCount === 0);
 
     if (selected === "timeline") renderTimeline();
 }
 
-btnTheme.addEventListener("click", () => setView("themes")); btnTimeline.addEventListener("click", () => setView("timeline")); btnDashboard.addEventListener("click", () => setView("dashboard")); $("btn-add").addEventListener("click", () => openForm());
+btnTheme.addEventListener("click", () => setView("themes")); btnTimeline.addEventListener("click", () => setView("timeline")); btnDashboard.addEventListener("click", () => setView("dashboard")); btnSettings.addEventListener("click", () => setView("settings")); $("btn-add").addEventListener("click", () => openForm());
+
+function moveTimeline(direction) {
+    const step = { day: 7, month: 6, year: 5, decade: 10 }[personalPreferences.timelineScale];
+    if (personalPreferences.timelineScale === "day") timelineAnchor.setDate(timelineAnchor.getDate() + direction * step);
+    else timelineAnchor.setFullYear(timelineAnchor.getFullYear() + direction * step);
+    renderTimeline();
+}
+
+$("timeline-previous").addEventListener("click", () => moveTimeline(-1));
+$("timeline-next").addEventListener("click", () => moveTimeline(1));
+$("timeline-today").addEventListener("click", () => { timelineAnchor = new Date(); renderTimeline(); });
+timelineScaleControl.addEventListener("change", () => {
+    personalPreferences.timelineScale = timelineScaleControl.value;
+    savePersonalPreferences();
+    renderTimeline();
+});
+timelineGroupingControl.addEventListener("change", () => {
+    personalPreferences.timelineGrouping = timelineGroupingControl.value;
+    savePersonalPreferences();
+    renderTimeline();
+});
+$("setting-theme").addEventListener("change", () => { personalPreferences.theme = $("setting-theme").value; savePersonalPreferences(); applyAppearance(); });
+$("setting-accent").addEventListener("change", () => { personalPreferences.accent = $("setting-accent").value; savePersonalPreferences(); applyAppearance(); });
+$("reset-preferences").addEventListener("click", () => {
+    personalPreferences = { ...PERSONAL_PREFERENCE_DEFAULTS };
+    displayMode = "grid";
+    timelineAnchor = new Date();
+    try { localStorage.removeItem(PERSONAL_PREFERENCES_KEY); localStorage.removeItem(DISPLAY_MODE_KEY); }
+    catch { /* Les préférences par défaut restent actives pour cette session. */ }
+    timelineScaleControl.value = personalPreferences.timelineScale;
+    timelineGroupingControl.value = personalPreferences.timelineGrouping;
+    applyAppearance();
+    render();
+    $("settings-status").textContent = "Préférences réinitialisées. Documents, favoris et comptes conservés.";
+});
+
+timelineScaleControl.value = personalPreferences.timelineScale;
+timelineGroupingControl.value = personalPreferences.timelineGrouping;
+applyAppearance();
 $("btn-admin-users").addEventListener("click", async () => {
     if (!requireAdmin()) return;
     $("admin-users-modal").classList.remove("hidden"); setAdminUsersStatus(""); await renderAdminUsers();

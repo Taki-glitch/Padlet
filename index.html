@@ -19,6 +19,7 @@
             <button id="btn-theme" class="active" type="button" aria-current="page">Documents</button>
             <button id="btn-timeline" type="button">Frise chronologique</button>
             <button id="btn-dashboard" type="button">Tableau de bord</button>
+            <button id="btn-settings" type="button">Paramètres</button>
             <button id="btn-add" class="btn-primary" type="button">+ Ajouter</button>
         </nav>
     </header>
@@ -79,10 +80,37 @@
         </section>
         <section id="view-themes" class="view active" aria-label="Documents par thème"></section>
         <section id="view-timeline" class="view hidden" aria-label="Frise chronologique">
-            <div class="timeline-help">Cliquez-glissez sur la frise pour parcourir le temps.</div>
+            <div class="timeline-toolbar" aria-label="Navigation temporelle">
+                <button id="timeline-previous" type="button" aria-label="Période précédente">← Précédent</button>
+                <button id="timeline-today" type="button">Aujourd’hui</button>
+                <button id="timeline-next" type="button" aria-label="Période suivante">Suivant →</button>
+                <label>Échelle <select id="timeline-scale"><option value="day">Jour</option><option value="month">Mois</option><option value="year">Année</option><option value="decade">Décennie</option></select></label>
+                <label>Grouper par <select id="timeline-grouping"><option value="day">Jour</option><option value="month">Mois</option><option value="year">Année</option></select></label>
+                <strong id="timeline-period" aria-live="polite"></strong>
+            </div>
+            <div class="timeline-help">Les documents sont affichés selon leur date de frise ou leur date documentaire. Les éléments sans date restent accessibles à part.</div>
             <div id="timeline-scroll" class="timeline-scroll" aria-label="Frise défilable horizontalement">
                 <div id="timeline-container" class="timeline-container"></div>
             </div>
+        </section>
+        <section id="view-settings" class="view settings-view hidden" aria-label="Paramètres du Padlet">
+            <h2>Paramètres</h2>
+            <section class="settings-panel" aria-labelledby="appearance-title">
+                <h3 id="appearance-title">Apparence</h3>
+                <label>Thème <select id="setting-theme"><option value="system">Système</option><option value="light">Clair</option><option value="dark">Sombre</option></select></label>
+                <label>Couleur d’accent <select id="setting-accent"><option value="indigo">Indigo</option><option value="blue">Bleu</option><option value="teal">Turquoise</option><option value="rose">Rose</option></select></label>
+                <p>Ces préférences sont enregistrées dans ce navigateur et ne sont pas synchronisées entre appareils.</p>
+            </section>
+            <section class="settings-panel" aria-labelledby="timeline-settings-title">
+                <h3 id="timeline-settings-title">Frise</h3>
+                <p>L’échelle et le regroupement choisis dans la frise sont conservés localement.</p>
+            </section>
+            <section class="settings-panel" aria-labelledby="general-settings-title">
+                <h3 id="general-settings-title">Général</h3>
+                <p>Padlet · version non déclarée</p>
+                <button id="reset-preferences" type="button">Réinitialiser mes préférences</button>
+                <p id="settings-status" role="status" aria-live="polite"></p>
+            </section>
         </section>
         <section id="view-dashboard" class="view dashboard hidden" aria-label="Tableau de bord">
             <div id="dashboard-metrics" class="dashboard-metrics"></div>

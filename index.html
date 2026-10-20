@@ -7,6 +7,20 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
+    <script>
+        try {
+            for (const key of Object.keys(localStorage)) {
+                if (!key.startsWith("sb-") || !key.includes("-auth-token")) continue;
+                let session = JSON.parse(localStorage.getItem(key) || "null");
+                if (typeof session === "string" && session.startsWith("base64-")) session = JSON.parse(atob(session.slice(7)));
+                const userId = session?.user?.id || session?.currentSession?.user?.id;
+                if (!userId) continue;
+                const preferences = JSON.parse(localStorage.getItem(`padlet-personal-preferences:v1:${userId}`) || "{}");
+                document.body.dataset.theme = ["system", "light", "dark"].includes(preferences.theme) ? preferences.theme : "system";
+                break;
+            }
+        } catch { document.body.dataset.theme = "system"; }
+    </script>
     <header>
         <div>
             <p class="eyebrow">ESPACE DE VEILLE</p>
@@ -118,7 +132,6 @@
             </section>
             <section class="settings-panel" aria-labelledby="general-settings-title">
                 <h3 id="general-settings-title">Général</h3>
-                <p>Padlet · version non déclarée</p>
                 <button id="reset-preferences" type="button">Réinitialiser mes préférences</button>
                 <p id="settings-status" role="status" aria-live="polite"></p>
             </section>
@@ -250,6 +263,12 @@
                     <select id="admin-new-role"><option value="user">Utilisateur</option><option value="admin">Administrateur</option></select>
                 </label>
                 <button id="admin-create-user-submit" class="btn-primary" type="submit">Créer</button>
+            </form>
+            <form id="admin-reset-password-form" class="hidden">
+                <h3 id="admin-reset-password-title">Réinitialiser le mot de passe</h3>
+                <input id="admin-reset-user-id" type="hidden">
+                <label>Nouveau mot de passe <input id="admin-reset-password" type="password" autocomplete="new-password" minlength="8" required></label>
+                <div class="form-actions"><button id="cancel-password-reset" type="button">Annuler</button><button type="submit" class="btn-primary">Réinitialiser</button></div>
             </form>
             <p id="admin-users-status" class="app-status" role="status"></p>
             <div id="admin-users-list" class="admin-users-list" aria-live="polite"></div>

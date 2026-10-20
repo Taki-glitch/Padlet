@@ -30,13 +30,42 @@ async function firebaseAccessToken() {
 
 const fieldValue = (field: Record<string, unknown> | undefined) => field?.stringValue as string | undefined;
 
+function isCivilDate(value: unknown): value is string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  if (year < 1 || month < 1 || month > 12 || day < 1) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][month - 1];
+  return day <= daysInMonth;
+}
+
+function addRetentionMonths(dateValue: string, months: number): string | null {
+  if (!isCivilDate(dateValue) || !Number.isSafeInteger(months) || months < 1) return null;
+  const [year, month, day] = dateValue.split("-").map(Number);
+  const monthIndex = year * 12 + month - 1 + months;
+  const targetYear = Math.floor(monthIndex / 12);
+  const targetMonth = monthIndex % 12 + 1;
+  if (targetYear > 9999) return null;
+  const leap = targetYear % 4 === 0 && (targetYear % 100 !== 0 || targetYear % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][targetMonth - 1];
+  return `${String(targetYear).padStart(4, "0")}-${String(targetMonth).padStart(2, "0")}-${String(Math.min(day, daysInMonth)).padStart(2, "0")}`;
+}
+
+function retentionMonthsValue(field: Record<string, unknown> | undefined): number | null {
+  const value = field?.integerValue ?? field?.doubleValue;
+  const months = typeof value === "string" || typeof value === "number" ? Number(value) : NaN;
+  return Number.isSafeInteger(months) && months > 0 ? months : null;
+}
+
 Deno.serve(async () => {
   try {
     if (!supabaseUrl || !supabaseServiceRoleKey) throw new Error("Secrets Supabase incomplets.");
     const token = await firebaseAccessToken();
+    // expiresAt est une date civile UTC, valable toute cette journée. La purge
+    // quotidienne ne sélectionne que les échéances strictement antérieures à aujourd'hui.
     const today = new Date().toISOString().slice(0, 10);
     const queryUrl = `https://firestore.googleapis.com/v1/projects/${firebaseProjectId}/databases/(default)/documents:runQuery`;
-    const query = { structuredQuery: { from: [{ collectionId: "padletItems" }], where: { fieldFilter: { field: { fieldPath: "expiresAt" }, op: "LESS_THAN_OR_EQUAL", value: { stringValue: today } } } } };
+    const query = { structuredQuery: { from: [{ collectionId: "padletItems" }], where: { fieldFilter: { field: { fieldPath: "expiresAt" }, op: "LESS_THAN", value: { stringValue: today } } } } };
     const queryResponse = await fetch(queryUrl, { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(query) });
     if (!queryResponse.ok) throw new Error(`Lecture Firestore: ${await queryResponse.text()}`);
     const results = await queryResponse.json();
@@ -46,6 +75,17 @@ Deno.serve(async () => {
     for (const result of results) {
       if (!result.document) continue;
       const document = result.document;
+      const fields = document.fields ?? {};
+      const documentDate = fieldValue(fields.date);
+      const expiresAt = fieldValue(fields.expiresAt);
+      const retentionMonths = retentionMonthsValue(fields.retentionMonths);
+      const expectedExpiry = documentDate && retentionMonths ? addRetentionMonths(documentDate, retentionMonths) : null;
+      const itemType = fieldValue(fields.type);
+      if ((itemType && itemType !== "document") || !isCivilDate(expiresAt) || !expectedExpiry || expectedExpiry !== expiresAt) {
+        console.error(`Échéance incohérente conservée pour vérification : ${document.name}`);
+        failures.push(document.name);
+        continue;
+      }
       const filePath = fieldValue(document.fields?.filePath);
       try {
         // Storage est supprimé en premier : en cas d'échec, les métadonnées restent pour un nouvel essai.

@@ -85,12 +85,13 @@
                 <button id="timeline-today" type="button">Aujourd’hui</button>
                 <button id="timeline-next" type="button" aria-label="Période suivante">Suivant →</button>
                 <label>Vue <select id="timeline-scale"><option value="month">Mois</option><option value="year">Année</option></select></label>
+                <label>Présentation <select id="timeline-presentation"><option value="line">Frise</option><option value="grouped">Documents groupés</option></select></label>
                 <label>Grouper par <select id="timeline-grouping"><option value="day">Jour</option><option value="month">Mois</option><option value="year">Année</option></select></label>
                 <label>Aller à une date <input id="timeline-date-target" type="date"></label>
                 <button id="timeline-go-date" type="button">Afficher cette période</button>
                 <strong id="timeline-period" aria-live="polite"></strong>
             </div>
-            <div class="timeline-help">Les documents sont affichés selon leur date de frise ou leur date documentaire. Les éléments sans date restent accessibles à part.</div>
+            <div class="timeline-help">Les documents sont affichés selon leur date de frise ou leur date documentaire. Les éléments sans date fiable restent accessibles dans une zone séparée.</div>
             <div id="timeline-scroll" class="timeline-scroll" aria-label="Frise défilable horizontalement">
                 <div id="timeline-container" class="timeline-container"></div>
             </div>
@@ -153,7 +154,7 @@
                     <label><input type="radio" name="item-type" value="deadline"> Échéance</label>
                 </fieldset>
                 <label>Titre <input type="text" id="doc-title" placeholder="Ex. Compte-rendu de réunion" required></label>
-                <label>Date <input type="date" id="doc-date" required></label>
+                <label><span id="doc-date-label">Date du document</span> <input type="date" id="doc-date" required></label>
                 <div id="document-fields">
                     <label>Thème <input type="text" id="doc-theme" list="existing-themes" placeholder="Ex. Histoire, Code…"></label>
                     <datalist id="existing-themes"></datalist>
@@ -191,6 +192,7 @@
             <div class="read-heading">
                 <button id="read-favorite" class="favorite-button" type="button" aria-label="Ajouter aux favoris" title="Ajouter aux favoris">☆</button>
                 <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span><span id="read-expiration-wrap" class="hidden"> · <span id="read-expiration"></span></span></div>
+                <p id="read-expiration-warning" class="expiration-warning hidden" role="status"></p>
             </div>
             <div id="read-tags" class="tags-container"></div>
             <div id="read-summary" class="read-summary"></div>

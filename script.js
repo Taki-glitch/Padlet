@@ -212,9 +212,11 @@ function renderRecentlyViewed() {
 function applyRoleUi() {
     $("btn-add").classList.toggle("hidden", !isAdmin());
     $("btn-admin-users").classList.toggle("hidden", !isAdmin());
+    $("admin-backup-panel").classList.toggle("hidden", !isAdmin());
     formModal.classList.add("hidden");
     timelineFormModal.classList.add("hidden");
     updateSelectionToolbar();
+    renderAdminExpirationReview();
 }
 
 function setAuthenticatedUi(user, profile = null) {
@@ -639,6 +641,7 @@ function render() {
     renderThemes();
     renderTimeline();
     renderDashboard();
+    renderAdminExpirationReview();
 }
 
 function renderResultsCount() {
@@ -784,6 +787,77 @@ function expirationLabel(item) {
     if (days === 0) return "Expire aujourd'hui";
     if (days === 1) return "Expire demain";
     return `Expire dans ${days} jours`;
+}
+function renderAdminExpirationReview() {
+    const container = $("admin-expiration-list");
+    if (!isAdmin()) { container.replaceChildren(); return; }
+    const scheduled = documentItems()
+        .filter((item) => item.retentionMonths !== undefined && item.retentionMonths !== null && item.retentionMonths !== "" || item.expiresAt !== undefined && item.expiresAt !== null && item.expiresAt !== "")
+        .sort((a, b) => String(a.expiresAt || "9999-99-99").localeCompare(String(b.expiresAt || "9999-99-99")));
+    container.replaceChildren();
+    if (!scheduled.length) {
+        container.append(createEmpty("Aucun document ne comporte de durée ou de date de suppression automatique."));
+        return;
+    }
+    scheduled.forEach((item) => {
+        const row = document.createElement("article"); row.className = "admin-expiration-row";
+        const title = document.createElement("strong"); title.textContent = item.title || "Sans titre";
+        const rawMonths = item.retentionMonths;
+        const months = Number(rawMonths);
+        const retentionLabel = rawMonths === undefined || rawMonths === null || rawMonths === ""
+            ? "Non définie"
+            : Number.isSafeInteger(months) && months > 0 ? `${months} mois` : `Valeur invalide (${String(rawMonths)})`;
+        const details = document.createElement("p"); details.textContent = `Date documentaire : ${dateLabel(item.date)} · Durée : ${retentionLabel} · Date d’expiration enregistrée : ${item.expiresAt || "Non définie"}`;
+        const warning = expirationConsistency(item);
+        const state = document.createElement("p");
+        state.className = warning ? "admin-expiration-warning" : "admin-expiration-ok";
+        const days = daysUntil(item.expiresAt);
+        const schedule = days === null
+            ? "Aucune date d’expiration exploitable : la fonction serveur ne doit pas supprimer ce document sur cette valeur."
+            : days < 0
+                ? "Date dépassée : la purge serveur pourra traiter le document lors d’un passage planifié si les champs concordent."
+                : days === 0
+                    ? "Échéance valable jusqu’à la fin de cette date ; la purge quotidienne intervient lors d’un passage ultérieur."
+                    : `Échéance à venir : le document ne doit pas être purgé avant le ${dateLabel(item.expiresAt)}.`;
+        state.textContent = warning ? `${warning} ${schedule}` : schedule;
+        row.append(title, details, state); container.append(row);
+    });
+}
+function buildMetadataExportPayload(documents, generatedAt = new Date()) {
+    const safeDocuments = documents.map((item) => ({
+        id: item.id,
+        type: item.type,
+        title: item.title || "",
+        date: item.date || "",
+        publishedAt: item.publishedAt || "",
+        theme: item.theme || "",
+        tags: item.tags || "",
+        retentionMonths: item.retentionMonths ?? null,
+        expiresAt: item.expiresAt || ""
+    }));
+    return { format: "padlet-document-metadata", version: 1, generatedAt: generatedAt.toISOString(), documentCount: safeDocuments.length, documents: safeDocuments };
+}
+async function exportDocumentMetadata() {
+    if (!requireAdmin()) return;
+    const button = $("export-document-metadata");
+    const status = $("backup-export-status");
+    button.disabled = true;
+    status.textContent = "Préparation de l’export…";
+    try {
+        await refreshAdminFirestoreSession();
+        const payload = buildMetadataExportPayload(sortDocuments(documentItems()));
+        const { documents } = payload;
+        const blobUrl = URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" }));
+        const download = document.createElement("a");
+        download.href = blobUrl;
+        download.download = `padlet-metadonnees-${new Date().toISOString().slice(0, 10)}.json`;
+        download.click();
+        window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+        status.textContent = `Export créé : ${documents.length} document${documents.length === 1 ? "" : "s"}. Aucun fichier ni lien de stockage n’est inclus.`;
+    } catch (error) {
+        console.error("Export des métadonnées impossible.", error);
+        status.textContent = error instanceof Error && error.message ? error.message : "L’export n’a pas pu être généré.";
+    } finally { button.disabled = false; }
 }
 function dashboardMetric(label, value) {
     const metric = document.createElement("article"); metric.className = "dashboard-metric";
@@ -1559,6 +1633,7 @@ $("reset-preferences").addEventListener("click", () => {
         ? "Préférences réinitialisées. Documents, favoris et comptes conservés."
         : "Valeurs par défaut appliquées pour cette session ; stockage local indisponible.";
 });
+$("export-document-metadata").addEventListener("click", exportDocumentMetadata);
 
 timelineScaleControl.value = personalPreferences.timelineView;
 timelineGroupingControl.value = personalPreferences.timelineGrouping;

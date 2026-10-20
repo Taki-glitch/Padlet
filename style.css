@@ -136,6 +136,13 @@ body[data-theme="dark"] .read-summary blockquote { background:#273449; color:#cb
 .settings-panel label { display:inline-grid; gap:.3rem; min-width:min(100%,220px); margin:0 1rem .6rem 0; color:var(--muted); font-size:.82rem; font-weight:700; }
 .settings-panel select, .settings-panel button { padding:.5rem .65rem; border:1px solid #cbd5e1; border-radius:6px; background:var(--card-bg); color:var(--text); }
 .settings-panel p { color:var(--muted); font-size:.88rem; }
+.admin-expiration-list { display:grid; gap:.55rem; }
+.admin-expiration-row { padding:.7rem .8rem; border:1px solid #dbe2ea; border-left:4px solid var(--primary); border-radius:7px; background:var(--card-bg); }
+.admin-expiration-row p { margin:.3rem 0 0; overflow-wrap:anywhere; }
+.admin-expiration-ok { color:#166534!important; }
+.admin-expiration-warning { color:#92400e!important; font-weight:700; }
+body[data-theme="dark"] .admin-expiration-ok { color:#86efac!important; }
+body[data-theme="dark"] .admin-expiration-warning { color:#fde68a!important; }
 @media (max-width:700px) {
     .timeline-toolbar { align-items:stretch; }
     .timeline-toolbar strong { flex-basis:100%; margin:.15rem 0 0; }

@@ -63,20 +63,42 @@ const RECENTLY_VIEWED_LIMIT = 6;
 const PERSONAL_PREFERENCES_KEY = "padlet-personal-preferences:v1";
 const timelineScaleControl = $("timeline-scale");
 const timelineGroupingControl = $("timeline-grouping");
-const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineScale: "month", timelineGrouping: "month" };
-function loadPersonalPreferences() {
-    try {
-        const stored = JSON.parse(localStorage.getItem(PERSONAL_PREFERENCES_KEY) || "{}");
-        return {
-            theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : PERSONAL_PREFERENCE_DEFAULTS.theme,
-            accent: ["indigo", "blue", "teal", "rose"].includes(stored.accent) ? stored.accent : PERSONAL_PREFERENCE_DEFAULTS.accent,
-            timelineScale: ["day", "month", "year", "decade"].includes(stored.timelineScale) ? stored.timelineScale : PERSONAL_PREFERENCE_DEFAULTS.timelineScale,
-            timelineGrouping: ["day", "month", "year"].includes(stored.timelineGrouping) ? stored.timelineGrouping : PERSONAL_PREFERENCE_DEFAULTS.timelineGrouping
-        };
-    } catch { return { ...PERSONAL_PREFERENCE_DEFAULTS }; }
+const PERSONAL_PREFERENCE_DEFAULTS = { theme: "system", accent: "indigo", timelineView: "month", timelineGrouping: "month", timelineAnchor: "" };
+let localPreferencesAvailable = true;
+function personalPreferencesStorageKey(userId) { return userId ? `${PERSONAL_PREFERENCES_KEY}:${userId}` : ""; }
+function localDateValue(date) {
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
-let personalPreferences = loadPersonalPreferences();
-let timelineAnchor = new Date();
+function parseLocalDate(value) {
+    if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+    const [year, month, day] = value.split("-").map(Number);
+    const date = new Date(year, month - 1, day, 12);
+    return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day ? date : null;
+}
+function loadPersonalPreferences(userId) {
+    const key = personalPreferencesStorageKey(userId);
+    let raw = "{}";
+    try {
+        raw = key ? localStorage.getItem(key) || "{}" : "{}";
+        localPreferencesAvailable = true;
+    } catch {
+        localPreferencesAvailable = false;
+        return { ...PERSONAL_PREFERENCE_DEFAULTS, timelineAnchor: localDateValue(new Date()) };
+    }
+    let parsed = {};
+    try { parsed = JSON.parse(raw); } catch { /* Des préférences mal formées reviennent aux valeurs sûres. */ }
+    const stored = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    const storedAnchor = parseLocalDate(stored.timelineAnchor);
+    return {
+        theme: ["system", "light", "dark"].includes(stored.theme) ? stored.theme : PERSONAL_PREFERENCE_DEFAULTS.theme,
+        accent: ["indigo", "blue", "teal", "rose"].includes(stored.accent) ? stored.accent : PERSONAL_PREFERENCE_DEFAULTS.accent,
+        timelineView: ["month", "year"].includes(stored.timelineView) ? stored.timelineView : PERSONAL_PREFERENCE_DEFAULTS.timelineView,
+        timelineGrouping: ["day", "month", "year"].includes(stored.timelineGrouping) ? stored.timelineGrouping : PERSONAL_PREFERENCE_DEFAULTS.timelineGrouping,
+        timelineAnchor: storedAnchor ? localDateValue(storedAnchor) : localDateValue(new Date())
+    };
+}
+let personalPreferences = loadPersonalPreferences(null);
+let timelineAnchor = parseLocalDate(personalPreferences.timelineAnchor) || new Date();
 let displayMode = (() => {
     try { return localStorage.getItem(DISPLAY_MODE_KEY) === "list" ? "list" : "grid"; }
     catch { return "grid"; }
@@ -110,8 +132,16 @@ function setStatus(message, isError = false) {
 }
 
 function savePersonalPreferences() {
-    try { localStorage.setItem(PERSONAL_PREFERENCES_KEY, JSON.stringify(personalPreferences)); }
-    catch { $("settings-status").textContent = "Préférence non enregistrée dans ce navigateur."; }
+    const key = personalPreferencesStorageKey(currentUser?.id);
+    if (!key) return;
+    personalPreferences.timelineAnchor = localDateValue(timelineAnchor);
+    try {
+        localStorage.setItem(key, JSON.stringify(personalPreferences));
+        localPreferencesAvailable = true;
+    } catch {
+        localPreferencesAvailable = false;
+        $("settings-status").textContent = "Préférence non enregistrée : le stockage local est indisponible.";
+    }
 }
 
 function applyAppearance() {
@@ -119,6 +149,9 @@ function applyAppearance() {
     document.body.dataset.accent = personalPreferences.accent;
     $("setting-theme").value = personalPreferences.theme;
     $("setting-accent").value = personalPreferences.accent;
+    $("setting-timeline-view").value = personalPreferences.timelineView;
+    timelineScaleControl.value = personalPreferences.timelineView;
+    timelineGroupingControl.value = personalPreferences.timelineGrouping;
 }
 
 function isAdmin() { return currentProfile?.role === "admin"; }
@@ -185,6 +218,10 @@ function setAuthenticatedUi(user, profile = null) {
     if (currentUser?.id !== user?.id) {
         selectionMode = false;
         selectedDocumentIds.clear();
+        personalPreferences = loadPersonalPreferences(user?.id);
+        timelineAnchor = parseLocalDate(personalPreferences.timelineAnchor) || new Date();
+        applyAppearance();
+        $("settings-status").textContent = localPreferencesAvailable ? "" : "Stockage local indisponible : les valeurs par défaut sont utilisées.";
     }
     currentUser = user;
     currentProfile = profile;
@@ -773,12 +810,12 @@ function parseTimelineDate(item) {
 function sortTimelineByDate(a, b) { return (parseTimelineDate(a)?.getTime() ?? Infinity) - (parseTimelineDate(b)?.getTime() ?? Infinity); }
 
 function timelineWindow() {
-    const start = new Date(timelineAnchor.getFullYear(), timelineAnchor.getMonth(), timelineAnchor.getDate());
-    const end = new Date(start);
-    if (personalPreferences.timelineScale === "day") { start.setDate(start.getDate() - 7); end.setDate(end.getDate() + 8); }
-    else if (personalPreferences.timelineScale === "month") { start.setDate(1); start.setMonth(start.getMonth() - 6); end.setDate(1); end.setMonth(end.getMonth() + 7); }
-    else if (personalPreferences.timelineScale === "year") { start.setMonth(0, 1); start.setFullYear(start.getFullYear() - 4); end.setMonth(0, 1); end.setFullYear(end.getFullYear() + 6); }
-    else { const decade = Math.floor(start.getFullYear() / 10) * 10; start.setFullYear(decade - 10, 0, 1); end.setFullYear(decade + 10, 0, 1); }
+    const start = personalPreferences.timelineView === "year"
+        ? new Date(timelineAnchor.getFullYear(), 0, 1)
+        : new Date(timelineAnchor.getFullYear(), timelineAnchor.getMonth(), 1);
+    const end = personalPreferences.timelineView === "year"
+        ? new Date(timelineAnchor.getFullYear() + 1, 0, 1)
+        : new Date(timelineAnchor.getFullYear(), timelineAnchor.getMonth() + 1, 1);
     return { start, end };
 }
 
@@ -804,6 +841,7 @@ function timelineGroupLabel(key) {
 function updateTimelinePeriod() {
     const { start, end } = timelineWindow();
     const label = new Intl.DateTimeFormat("fr-FR", { dateStyle: "medium" });
+    $("timeline-date-target").value = localDateValue(timelineAnchor);
     $("timeline-period").textContent = `${label.format(start)} – ${label.format(new Date(end.getTime() - 86400000))} · Aujourd’hui : ${label.format(new Date())}`;
 }
 
@@ -921,9 +959,9 @@ function renderTimeline() {
     });
     if (undated.length) groups.set("undated", undated);
     if (!groups.size) {
-        const empty = createEmpty("Aucun élément pour cette période. Vous pouvez revenir à aujourd’hui, changer l’échelle ou avancer/reculer dans le temps.");
+        const empty = createEmpty("Aucun élément pour cette période. Revenez à aujourd’hui, choisissez une autre vue ou date, ou avancez/reculez dans le temps.");
         const today = document.createElement("button"); today.type = "button"; today.textContent = "Revenir à aujourd’hui";
-        today.addEventListener("click", () => { timelineAnchor = new Date(); renderTimeline(); });
+        today.addEventListener("click", () => { timelineAnchor = new Date(); savePersonalPreferences(); renderTimeline(); });
         empty.append(document.createElement("br"), today);
         timelineContainer.append(empty);
         return;
@@ -1326,23 +1364,31 @@ function setView(view) {
     viewSettings.classList.toggle("hidden", selected !== "settings");
     recentlyViewedSection.classList.toggle("hidden", selected !== "themes" || recentlyViewedList.childElementCount === 0);
 
-    if (selected === "timeline") renderTimeline();
+    if (selected === "timeline") { savePersonalPreferences(); renderTimeline(); }
 }
 
 btnTheme.addEventListener("click", () => setView("themes")); btnTimeline.addEventListener("click", () => setView("timeline")); btnDashboard.addEventListener("click", () => setView("dashboard")); btnSettings.addEventListener("click", () => setView("settings")); $("btn-add").addEventListener("click", () => openForm());
 
 function moveTimeline(direction) {
-    const step = { day: 7, month: 6, year: 5, decade: 10 }[personalPreferences.timelineScale];
-    if (personalPreferences.timelineScale === "day") timelineAnchor.setDate(timelineAnchor.getDate() + direction * step);
-    else timelineAnchor.setFullYear(timelineAnchor.getFullYear() + direction * step);
+    if (personalPreferences.timelineView === "year") timelineAnchor = new Date(timelineAnchor.getFullYear() + direction, 0, 1, 12);
+    else timelineAnchor = new Date(timelineAnchor.getFullYear(), timelineAnchor.getMonth() + direction, 1, 12);
+    savePersonalPreferences();
     renderTimeline();
 }
 
 $("timeline-previous").addEventListener("click", () => moveTimeline(-1));
 $("timeline-next").addEventListener("click", () => moveTimeline(1));
-$("timeline-today").addEventListener("click", () => { timelineAnchor = new Date(); renderTimeline(); });
+$("timeline-today").addEventListener("click", () => { timelineAnchor = new Date(); savePersonalPreferences(); renderTimeline(); });
+$("timeline-go-date").addEventListener("click", () => {
+    const target = parseLocalDate($("timeline-date-target").value);
+    if (!target) { setStatus("Choisissez une date valide pour afficher la période.", true); return; }
+    timelineAnchor = target;
+    savePersonalPreferences();
+    renderTimeline();
+});
 timelineScaleControl.addEventListener("change", () => {
-    personalPreferences.timelineScale = timelineScaleControl.value;
+    personalPreferences.timelineView = timelineScaleControl.value;
+    $("setting-timeline-view").value = personalPreferences.timelineView;
     savePersonalPreferences();
     renderTimeline();
 });
@@ -1353,20 +1399,32 @@ timelineGroupingControl.addEventListener("change", () => {
 });
 $("setting-theme").addEventListener("change", () => { personalPreferences.theme = $("setting-theme").value; savePersonalPreferences(); applyAppearance(); });
 $("setting-accent").addEventListener("change", () => { personalPreferences.accent = $("setting-accent").value; savePersonalPreferences(); applyAppearance(); });
+$("setting-timeline-view").addEventListener("change", () => {
+    personalPreferences.timelineView = $("setting-timeline-view").value;
+    timelineScaleControl.value = personalPreferences.timelineView;
+    savePersonalPreferences();
+    renderTimeline();
+});
 $("reset-preferences").addEventListener("click", () => {
-    personalPreferences = { ...PERSONAL_PREFERENCE_DEFAULTS };
+    personalPreferences = { ...PERSONAL_PREFERENCE_DEFAULTS, timelineAnchor: localDateValue(new Date()) };
     displayMode = "grid";
     timelineAnchor = new Date();
-    try { localStorage.removeItem(PERSONAL_PREFERENCES_KEY); localStorage.removeItem(DISPLAY_MODE_KEY); }
-    catch { /* Les préférences par défaut restent actives pour cette session. */ }
-    timelineScaleControl.value = personalPreferences.timelineScale;
+    try {
+        const key = personalPreferencesStorageKey(currentUser?.id);
+        if (key) localStorage.removeItem(key);
+        localStorage.removeItem(DISPLAY_MODE_KEY);
+        localPreferencesAvailable = true;
+    } catch { localPreferencesAvailable = false; }
+    timelineScaleControl.value = personalPreferences.timelineView;
     timelineGroupingControl.value = personalPreferences.timelineGrouping;
     applyAppearance();
     render();
-    $("settings-status").textContent = "Préférences réinitialisées. Documents, favoris et comptes conservés.";
+    $("settings-status").textContent = localPreferencesAvailable
+        ? "Préférences réinitialisées. Documents, favoris et comptes conservés."
+        : "Valeurs par défaut appliquées pour cette session ; stockage local indisponible.";
 });
 
-timelineScaleControl.value = personalPreferences.timelineScale;
+timelineScaleControl.value = personalPreferences.timelineView;
 timelineGroupingControl.value = personalPreferences.timelineGrouping;
 applyAppearance();
 $("btn-admin-users").addEventListener("click", async () => {

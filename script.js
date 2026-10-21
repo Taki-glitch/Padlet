@@ -783,20 +783,6 @@ function renderAdminExpirationReview() {
         container.append(row);
     });
 }
-function buildMetadataExportPayload(documents, generatedAt = new Date()) {
-    const safeDocuments = documents.map((item) => ({
-        id: item.id,
-        type: item.type,
-        title: item.title || "",
-        date: item.date || "",
-        publishedAt: item.publishedAt || "",
-        theme: item.theme || "",
-        tags: item.tags || "",
-        retentionMonths: item.retentionMonths ?? null,
-        expiresAt: item.expiresAt || ""
-    }));
-    return { format: "padlet-document-metadata", version: 1, generatedAt: generatedAt.toISOString(), documentCount: safeDocuments.length, documents: safeDocuments };
-}
 async function exportDocumentMetadata() {
     if (!requireAdmin()) return;
     const button = $("export-document-metadata");

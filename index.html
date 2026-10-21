@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mon Mur de Documents</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <script>
+        try {
+            for (const key of Object.keys(localStorage)) {
+                if (!key.startsWith("sb-") || !key.includes("-auth-token")) continue;
+                let session = JSON.parse(localStorage.getItem(key) || "null");
+                if (typeof session === "string" && session.startsWith("base64-")) session = JSON.parse(atob(session.slice(7)));
+                const userId = session?.user?.id || session?.currentSession?.user?.id;
+                if (!userId) continue;
+                const preferences = JSON.parse(localStorage.getItem(`padlet-personal-preferences:v1:${userId}`) || "{}");
+                document.body.dataset.theme = ["system", "light", "dark"].includes(preferences.theme) ? preferences.theme : "system";
+                break;
+            }
+        } catch { document.body.dataset.theme = "system"; }
+    </script>
+    <header>
+        <div>
+            <p class="eyebrow">ESPACE DE VEILLE</p>
+            <h1>📚 Mon Mur de Documents</h1>
+        </div>
+        <nav aria-label="Navigation principale">
+            <div class="view-tabs" role="group" aria-label="Vues">
+                <button id="btn-theme" class="active" type="button" aria-current="page">Documents</button>
+                <button id="btn-timeline" type="button">Frise</button>
+                <button id="btn-dashboard" type="button">Tableau de bord</button>
+            </div>
+            <button id="btn-add" class="btn-primary" type="button">+ Ajouter</button>
+            <div class="account-menu">
+                <button id="btn-account" class="account-toggle hidden" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="account-panel"><span id="auth-user"></span><span aria-hidden="true">▾</span></button>
+                <div id="account-panel" class="account-panel hidden">
+                    <button id="btn-settings" type="button">Paramètres</button>
+                    <button id="btn-admin-users" class="hidden" type="button">Utilisateurs</button>
+                    <button id="btn-sign-out" type="button">Se déconnecter</button>
+                </div>
+            </div>
+        </nav>
+    </header>
+
+    <main>
+        <section class="board-tools" aria-label="Recherche et stockage">
+            <div class="document-controls" aria-label="Recherche, filtres et tri">
+                <label class="search-control" for="document-search">
+                    <span aria-hidden="true">🔎</span>
+                    <input id="document-search" type="search" placeholder="Rechercher un document…" autocomplete="off">
+                    <button id="clear-search" class="clear-search hidden" type="button" aria-label="Effacer la recherche" title="Effacer la recherche">&times;</button>
+                </label>
+                <details class="filters-menu" id="filters-menu">
+                    <summary>Filtres <span id="filters-badge" class="filters-badge hidden"></span></summary>
+                    <div class="filters-panel">
+                <label class="filter-control">Thème
+                    <select id="theme-filter" aria-label="Filtrer par thème"><option value="">Tous</option></select>
+                </label>
+                <label class="filter-control">Tag
+                    <select id="tag-filter" aria-label="Filtrer par tag"><option value="">Tous</option></select>
+                </label>
+                <label class="filter-control">Favoris
+                    <select id="favorite-filter" aria-label="Filtrer par favoris"><option value="">Tous</option><option value="favorites">Favoris</option></select>
+                </label>
+                <label class="filter-control">Trier par
+                    <select id="sort-control" aria-label="Trier les documents">
+                        <option value="date-desc">Date — plus récente</option>
+                        <option value="date-asc">Date — plus ancienne</option>
+                        <option value="title-asc">Titre — A → Z</option>
+                        <option value="title-desc">Titre — Z → A</option>
+                    </select>
+                </label>
+                    </div>
+                </details>
+                <div class="display-mode" role="group" aria-label="Affichage des documents">
+                    <button id="view-grid" type="button" aria-pressed="true">Grille</button>
+                    <button id="view-list" type="button" aria-pressed="false">Liste</button>
+                </div>
+                <button id="select-mode-toggle" class="select-mode-toggle" type="button" aria-pressed="false">Sélectionner</button>
+            </div>
+            <div id="storage-indicator" class="storage-indicator" role="status" aria-live="polite">
+                <div class="storage-heading"><span>💾 Stockage</span><strong id="storage-value">Chargement…</strong></div>
+                <div class="storage-track" aria-hidden="true"><span id="storage-progress"></span></div>
+                <small id="storage-remaining"></small>
+            </div>
+        </section>
+        <p id="results-count" class="results-count" aria-live="polite"></p>
+        <section id="filter-summary" class="filter-summary hidden" aria-label="Critères actifs">
+            <div id="active-filters" class="active-filters"></div>
+            <button id="reset-filters" type="button">Réinitialiser les filtres</button>
+        </section>
+        <section id="selection-toolbar" class="selection-toolbar hidden" aria-label="Actions groupées">
+            <span id="selection-count" aria-live="polite">0 document sélectionné</span>
+            <div class="selection-actions">
+                <button id="clear-selection" type="button">Tout désélectionner</button>
+                <button id="delete-selected" class="delete hidden" type="button">Supprimer la sélection</button>
+            </div>
+        </section>
+        <p id="app-status" class="app-status" role="status">Connexion à votre tableau…</p>
+        <section id="recently-viewed" class="recently-viewed hidden" aria-label="Documents consultés récemment">
+            <h2>Consultés récemment</h2>
+            <div id="recently-viewed-list" class="recently-viewed-list"></div>
+        </section>
+        <section id="view-themes" class="view active" aria-label="Documents par thème"></section>
+        <section id="view-timeline" class="view hidden" aria-label="Frise chronologique">
+            <div class="timeline-toolbar" aria-label="Affichage de la frise">
+                <label>Zoom <select id="timeline-zoom"><option value="25">25 %</option><option value="50">50 %</option><option value="75">75 %</option><option value="100" selected>100 %</option><option value="125">125 %</option></select></label>
+                <label>Regrouper par <select id="timeline-grouping"><option value="none">Aucun regroupement</option><option value="month">Mois</option><option value="theocratic">Année théocratique</option></select></label>
+            </div>
+            <div class="timeline-help">Documents et échéances sont placés dans l’ordre de leur date, avec une couleur par thème. Faites glisser pour parcourir.</div>
+            <div id="timeline-scroll" class="timeline-scroll" aria-label="Frise défilable horizontalement">
+                <div id="timeline-container" class="timeline-container"></div>
+            </div>
+        </section>
+        <section id="view-settings" class="view settings-view hidden" aria-label="Paramètres du Padlet">
+            <h2>Paramètres</h2>
+            <section class="settings-panel" aria-labelledby="appearance-title">
+                <h3 id="appearance-title">Apparence</h3>
+                <label>Thème <select id="setting-theme"><option value="system">Système</option><option value="light">Clair</option><option value="dark">Sombre</option></select></label>
+                <label>Couleur d’accent <select id="setting-accent"><option value="indigo">Indigo</option><option value="blue">Bleu</option><option value="teal">Turquoise</option><option value="rose">Rose</option></select></label>
+                <p>Ces préférences sont enregistrées dans ce navigateur et ne sont pas synchronisées entre appareils.</p>
+            </section>
+            <section id="admin-backup-panel" class="settings-panel hidden" aria-labelledby="admin-backup-title">
+                <h3 id="admin-backup-title">Sauvegarde et échéances</h3>
+                <p>L’export JSON contient les métadonnées de base des documents. Il exclut le contenu, les résumés, les liens de fichiers et les données d’authentification ; ce n’est pas une sauvegarde des fichiers.</p>
+                <button id="export-document-metadata" type="button">Exporter les métadonnées (JSON)</button>
+                <p id="backup-export-status" role="status" aria-live="polite"></p>
+                <h4>Échéances de suppression automatique</h4>
+                <p>Consultation en lecture seule. Une échéance modifiée n’est prise en compte qu’après enregistrement cohérent de la date documentaire, de la durée et de la date d’expiration. Cette vue ne lance jamais la purge.</p>
+                <div id="admin-expiration-list" class="admin-expiration-list" aria-live="polite"></div>
+            </section>
+            <section class="settings-panel" aria-labelledby="general-settings-title">
+                <h3 id="general-settings-title">Général</h3>
+                <button id="reset-preferences" type="button">Réinitialiser mes préférences</button>
+                <p id="settings-status" role="status" aria-live="polite"></p>
+            </section>
+        </section>
+        <section id="view-dashboard" class="view dashboard hidden" aria-label="Tableau de bord">
+            <div id="dashboard-metrics" class="dashboard-metrics"></div>
+            <div class="dashboard-columns">
+                <article class="dashboard-panel"><h2>Échéances à venir (30 jours)</h2><div id="dashboard-deadlines"></div></article>
+                <article class="dashboard-panel"><h2>Documents proches de leur expiration</h2><div id="dashboard-expirations"></div></article>
+                <article class="dashboard-panel"><h2>Derniers documents ajoutés</h2><div id="dashboard-recent"></div></article>
+                <article class="dashboard-panel"><h2>Documents à compléter</h2><div id="dashboard-incomplete"></div></article>
+            </div>
+        </section>
+    </main>
+
+    <div id="auth-modal" class="modal" role="dialog" aria-modal="true" aria-labelledby="auth-title">
+        <div class="modal-content auth-content">
+            <h2 id="auth-title">Connexion</h2>
+            <p>Connectez-vous pour accéder au tableau.</p>
+            <form id="auth-form">
+                <label>Identifiant <input id="auth-username" type="text" autocomplete="username" minlength="3" maxlength="32" required></label>
+                <label>Mot de passe <input id="auth-password" type="password" autocomplete="current-password" required></label>
+                <button id="auth-submit" type="submit" class="btn-primary">Se connecter</button>
+            </form>
+            <p id="auth-error" class="auth-error" role="alert"></p>
+        </div>
+    </div>
+
+    <div id="form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+        <div class="modal-content form-content">
+            <button class="close-btn" id="close-form" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="modal-title">Ajouter un élément</h2>
+            <form id="doc-form">
+                <input type="hidden" id="doc-id">
+                <input type="hidden" id="existing-file-url">
+                <input type="hidden" id="existing-file-path">
+                <input type="hidden" id="existing-file-name">
+                <input type="hidden" id="existing-file-type">
+                <fieldset class="type-choice">
+                    <legend>Type d'élément</legend>
+                    <label><input type="radio" name="item-type" value="document" checked> Document</label>
+                    <label><input type="radio" name="item-type" value="deadline"> Échéance</label>
+                </fieldset>
+                <label>Titre <input type="text" id="doc-title" placeholder="Ex. Compte-rendu de réunion" required></label>
+                <label><span id="doc-date-label">Date du document</span> <input type="date" id="doc-date" required></label>
+                <div id="document-fields">
+                    <label>Thème <input type="text" id="doc-theme" list="existing-themes" placeholder="Ex. Histoire, Code…"></label>
+                    <datalist id="existing-themes"></datalist>
+                    <label>Tags <input type="text" id="doc-tags" placeholder="Séparés par des virgules"></label>
+                    <label>Résumé <textarea id="doc-summary" placeholder="Résumé du document…" aria-describedby="summary-hint"></textarea></label>
+                    <small id="summary-hint">Vous pouvez utiliser Markdown : <strong>**gras**</strong>, <em>*italique*</em>, titres, listes et citations.</small>
+                    <label>Contenu ou lien <textarea id="doc-content" placeholder="Notes, contenu complet ou lien…"></textarea></label>
+                    <label>Fichier <input type="file" id="doc-file" aria-describedby="file-hint"></label>
+                    <small id="file-hint">Image, PDF ou tout autre fichier. Laissez vide pour conserver le fichier actuel.</small>
+                    <label>Durée de conservation
+                        <select id="doc-retention" aria-describedby="expiration-preview">
+                            <option value="">Aucune expiration</option>
+                            <option value="1">1 mois</option>
+                            <option value="3">3 mois</option>
+                            <option value="6">6 mois</option>
+                            <option value="12">1 an</option>
+                        </select>
+                    </label>
+                    <small id="expiration-preview">Ce document ne sera pas supprimé automatiquement.</small>
+                </div>
+                <div id="deadline-fields" class="hidden">
+                    <label>Couleur du jalon <input type="color" id="deadline-color" value="#f97316"></label>
+                    <label>Description rapide <input type="text" id="deadline-description" placeholder="Ex. Envoyer la version finale"></label>
+                </div>
+                <button id="submit-item" type="submit" class="btn-primary">Enregistrer</button>
+            </form>
+        </div>
+    </div>
+
+    <div id="read-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="read-title">
+        <div class="modal-content">
+            <button class="close-btn" id="close-read" type="button" aria-label="Fermer">&times;</button>
+            <p id="read-type" class="item-kind"></p>
+            <h2 id="read-title"></h2>
+            <div class="read-heading">
+                <button id="read-favorite" class="favorite-button" type="button" aria-label="Ajouter aux favoris" title="Ajouter aux favoris">☆</button>
+                <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span><span id="read-expiration-wrap" class="hidden"> · <span id="read-expiration"></span></span></div>
+                <p id="read-expiration-warning" class="expiration-warning hidden" role="status"></p>
+            </div>
+            <div id="read-tags" class="tags-container"></div>
+            <div id="read-summary" class="read-summary"></div>
+            <p id="read-content"></p>
+            <div id="read-file" class="file-preview"></div>
+        </div>
+    </div>
+
+    <div id="timeline-form-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="timeline-form-title">
+        <div class="modal-content form-content">
+            <button class="close-btn" id="close-timeline-form" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="timeline-form-title">Personnaliser l’événement</h2>
+            <div class="timeline-form-links">
+                <button id="timeline-open-item" type="button">Voir l’élément</button>
+                <button id="timeline-edit-item" type="button">Modifier toutes les informations</button>
+            </div>
+            <form id="timeline-form">
+                <input type="hidden" id="timeline-item-id">
+                <label>Date affichée <input type="date" id="timeline-date" required></label>
+                <label>Titre affiché <input type="text" id="timeline-title" placeholder="Titre de l’événement"></label>
+                <label>Contenu affiché <textarea id="timeline-content" aria-describedby="timeline-content-hint" placeholder="Contenu de l’événement"></textarea></label>
+                <small id="timeline-content-hint">Vous pouvez utiliser Markdown : <strong>**gras**</strong>, <em>*italique*</em>, titres, listes et citations.</small>
+                <label>Couleur
+                    <select id="timeline-color">
+                        <option value="">Automatique</option>
+                        <option value="#4f46e5">Bleu</option>
+                        <option value="#7c3aed">Violet</option>
+                        <option value="#16a34a">Vert</option>
+                        <option value="#f97316">Orange</option>
+                        <option value="#dc2626">Rouge</option>
+                        <option value="#ca8a04">Jaune</option>
+                        <option value="#64748b">Gris</option>
+                    </select>
+                </label>
+                <div class="form-actions">
+                    <button id="cancel-timeline-form" type="button">Annuler</button>
+                    <button id="submit-timeline-form" type="submit" class="btn-primary">Enregistrer</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <div id="admin-users-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="admin-users-title">
+        <div class="modal-content admin-users-content">
+            <button class="close-btn" id="close-admin-users" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="admin-users-title">Gestion des utilisateurs</h2>
+            <form id="admin-create-user-form">
+                <h3>Créer un utilisateur</h3>
+                <label>Identifiant <input id="admin-new-username" type="text" autocomplete="off" minlength="3" maxlength="32" required></label>
+                <label>Mot de passe <input id="admin-new-password" type="password" autocomplete="new-password" minlength="8" required></label>
+                <label>Rôle
+                    <select id="admin-new-role"><option value="user">Utilisateur</option><option value="admin">Administrateur</option></select>
+                </label>
+                <button id="admin-create-user-submit" class="btn-primary" type="submit">Créer</button>
+            </form>
+            <form id="admin-reset-password-form" class="hidden">
+                <h3 id="admin-reset-password-title">Réinitialiser le mot de passe</h3>
+                <input id="admin-reset-user-id" type="hidden">
+                <label>Nouveau mot de passe <input id="admin-reset-password" type="password" autocomplete="new-password" minlength="8" required></label>
+                <div class="form-actions"><button id="cancel-password-reset" type="button">Annuler</button><button type="submit" class="btn-primary">Réinitialiser</button></div>
+            </form>
+            <p id="admin-users-status" class="app-status" role="status"></p>
+            <div id="admin-users-list" class="admin-users-list" aria-live="polite"></div>
+        </div>
+    </div>
+
+    <script type="module" src="script.js"></script>
+</body>
+</html>

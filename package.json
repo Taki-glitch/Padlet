@@ -1,0 +1,8 @@
+{
+  "name": "padlet",
+  "private": true,
+  "scripts": {
+    "check": "node scripts/check-syntax.mjs && node scripts/check-imports.mjs",
+    "test": "node --test tests/*.mjs"
+  }
+}

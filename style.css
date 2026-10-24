@@ -271,3 +271,18 @@ button.dashboard-metric:hover, button.dashboard-list-item:hover { background:var
 .pdf-frame { display:block; width:100%; height:70vh; margin-top:.6rem; border:1px solid var(--line,#cbd5e1); border-radius:8px; }
 .file-error { color:#b91c1c; }
 #read-content a { color:var(--primary); overflow-wrap:anywhere; }
+
+/* --- Phase 7 : indice de recherche, notes de paramètres, case à cocher, impression --- */
+.search-hint { margin:.3rem 0; font-size:.78rem; color:var(--muted); font-style:italic; }
+.settings-panel .settings-note { margin:.5rem 0 0; font-size:.8rem; }
+.inline-check { display:flex !important; align-items:center; gap:.45rem; margin:.2rem 0 .6rem !important; font-weight:600 !important; }
+.inline-check input { width:auto; }
+.link-button { margin-left:.4rem; padding:.2rem .5rem; border:1px solid #cbd5e1; border-radius:6px; background:var(--card-bg); color:var(--primary); font-size:.75rem; font-weight:700; cursor:pointer; }
+@media print {
+    header, nav, #btn-add, .account-menu, .timeline-toolbar, .timeline-help, .timeline-edit, .modal, #status, .app-status { display:none !important; }
+    body { background:#fff !important; color:#000 !important; }
+    .timeline-scroll, .timeline-line-scroll { overflow:visible !important; max-width:none !important; }
+    .timeline-label, .timeline-group, .timeline-marker { break-inside:avoid; }
+    .timeline-label, .timeline-group-title, .timeline-marker::after { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    a { color:inherit; text-decoration:none; }
+}

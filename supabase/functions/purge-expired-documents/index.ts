@@ -1,4 +1,4 @@
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.4";
 import { addRetentionMonths, isCivilDate, isDueForPurge } from "../_shared/expiration.mjs";
 
 const firebaseProjectId = Deno.env.get("FIREBASE_PROJECT_ID") ?? "";

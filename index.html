@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Mon Mur de Documents</title>
+    <title>Mon Mur de Documents – Padlet</title>
+    <meta name="description" content="Padlet : centralisez, recherchez et organisez vos documents autour d’une frise chronologique.">
+    <meta name="theme-color" content="#4f46e5">
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Cpath d='M18 18h28v6H18zm0 12h28v6H18zm0 12h18v6H18z' fill='white'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -161,6 +164,10 @@
             <section class="settings-panel" aria-labelledby="general-settings-title">
                 <h3 id="general-settings-title">Général</h3>
                 <button id="reset-preferences" type="button">Réinitialiser mes préférences</button>
+                <button id="export-calendar" type="button">Exporter les échéances (.ics)</button>
+                <button id="btn-change-password" type="button">Changer mon mot de passe</button>
+                <p class="settings-note">Le fichier .ics est un export ponctuel à importer dans votre agenda : il ne se synchronise pas automatiquement.</p>
+                <p id="app-version" class="settings-note"></p>
                 <p id="settings-status" role="status" aria-live="polite"></p>
             </section>
         </section>
@@ -241,6 +248,7 @@
             <h2 id="read-title"></h2>
             <div class="read-heading">
                 <button id="read-favorite" class="favorite-button" type="button" aria-label="Ajouter aux favoris" title="Ajouter aux favoris">☆</button>
+                <button id="read-copy-link" class="link-button" type="button">Copier le lien</button>
                 <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span><span id="read-expiration-wrap" class="hidden"> · <span id="read-expiration"></span></span></div>
                 <p id="read-expiration-warning" class="expiration-warning hidden" role="status"></p>
             </div>
@@ -306,6 +314,21 @@
             </form>
             <p id="admin-users-status" class="app-status" role="status"></p>
             <div id="admin-users-list" class="admin-users-list" aria-live="polite"></div>
+        </div>
+    </div>
+
+    <div id="password-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="password-title">
+        <div class="modal-content">
+            <button class="close-btn" id="close-password" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="password-title">Changer mon mot de passe</h2>
+            <form id="password-form" autocomplete="off">
+                <label>Mot de passe actuel <input id="password-current" type="password" autocomplete="current-password" required></label>
+                <label>Nouveau mot de passe <input id="password-new" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
+                <label>Confirmer le nouveau mot de passe <input id="password-confirm" type="password" autocomplete="new-password" minlength="8" maxlength="72" required></label>
+                <label class="inline-check"><input id="password-show" type="checkbox"> Afficher les mots de passe</label>
+                <p id="password-status" class="app-status" role="status" aria-live="polite"></p>
+                <div class="form-actions"><button id="cancel-password" type="button">Annuler</button><button id="password-submit" type="submit" class="btn-primary">Modifier</button></div>
+            </form>
         </div>
     </div>
 

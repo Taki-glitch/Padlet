@@ -2,6 +2,21 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.8.0 — Doublons, recherches enregistrées, échéances terminées, contrôle des secrets
+
+### Nouveautés (modules testés ; affichage **non vérifié dans un navigateur**)
+- **Avertissement de doublon** à l'envoi d'un fichier : empreinte SHA-256 calculée dans le navigateur ; « fichier identique » (même contenu) ou « même nom et même taille » (anciennes fiches sans empreinte). Avertissement seulement, jamais de suppression. L'empreinte est conservée dans la fiche (`sha256`).
+- **Recherches enregistrées** (Filtres) : par utilisateur, sur l'appareil (localStorage), 20 maximum.
+- **Échéances terminées** : bouton dans la fiche (administrateur), champs `done`/`doneAt` ; masquées du tableau de bord et de l'export .ics, conservées dans la frise ; réversible.
+- **Contrôle des secrets** en CI (`scripts/check-secrets.mjs`) : clés privées, jeton `service_role`, clé `sb_secret_`. Les clés publiques sont autorisées.
+
+### Correction de cohérence
+- Le journal d'audit des comptes est **intégré à `admin-users/index.ts`** (déployable en un seul fichier depuis l'éditeur Supabase) ; `_shared/auditlog.mjs` est supprimé (plus d'import manquant possible). Le test exécute le code réellement déployé.
+
+### Documentation
+- `docs/PLAN-CORBEILLE.md` (plan à valider), `docs/PERMISSIONS.md`, `docs/TEST-RESTAURATION.md`, tests d'appareils réels dans `docs/TESTS-MANUELS.md`.
+- 65 tests.
+
 ## 0.7.3 — Cause trouvée : fiches avec « retentionMonths: null »
 
 ### Correction importante

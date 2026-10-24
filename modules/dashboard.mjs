@@ -23,3 +23,6 @@ export function overdueDeadlines(entries, today, dateOf, windowDays = 30) {
         .filter(({ late }) => Number.isFinite(late) && late >= 1 && late <= windowDays)
         .sort((a, b) => a.late - b.late).map(({ item, late }) => ({ ...item, daysLate: late }));
 }
+
+// Échéance terminée : champ `done` (booléen) et `doneAt` (AAAA-MM-JJ), ajoutés seulement à la fiche concernée (anciennes fiches : à faire).
+export const isDone = (item) => item?.done === true;

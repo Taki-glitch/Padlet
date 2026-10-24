@@ -76,3 +76,6 @@ Causes plausibles, de la plus probable à la moins probable :
 3. bibliothèque pdf.js non chargée (source bloquée) : seconde source (0.7.2) ;
 4. échecs précédents mémorisés (`error`) donc jamais retentés : corrigé (0.7.2).
 À faire après déploiement : Paramètres → « Indexer les PDF non indexés », puis **lire le message affiché** : il nomme la fiche et la cause.
+
+### Cause confirmée (0.7.3)
+Le message de l'indexation 0.7.2 nomme `retentionMonths` pour trois fiches. L'ancien formulaire enregistrait `retentionMonths: null` quand la durée de conservation était vide ; les règles refusent cette valeur et valident le document résultant, donc toute écriture sur ces fiches échouait. Corrigé par `mergeItem()` (voir CHANGELOG 0.7.3). Les fiches concernées se réparent d'elles-mêmes à la prochaine écriture.

@@ -2,6 +2,29 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.7.2 — Indexation des PDF fiabilisée, tableau de bord
+
+Cumule 0.7.1 (diagnostic) : si vous êtes en 0.7.0, ce lot contient les deux.
+
+### Corrections (indexation des PDF)
+- Un PDF dont la lecture avait échoué une fois gardait l'état « error » et n'était **jamais retenté** (le bouton répondait « Tous les PDF sont déjà indexés »). Désormais ils sont retentés, et un échec n'est plus mémorisé.
+- pdf.js est chargé depuis **deux sources** (cdnjs, puis jsDelivr) : une source bloquée n'empêche plus l'indexation.
+- Messages précis par cause : lecture du fichier impossible, bibliothèque non chargée, PDF illisible, règles Firestore, écriture refusée.
+- Paramètres affiche en permanence : nombre de PDF, indexés, sans texte (scannés), à indexer.
+- (0.7.1) Écoute Firestore refusée : code d'erreur affiché et reconnexion avec un jeton neuf ; pré-contrôle des limites des règles (`modules/rules-check.mjs`).
+
+### Nouveautés
+- Tableau de bord : « Échéances dépassées (30 jours) », « Documents par thème », « Fichiers les plus volumineux » (calculs dans `modules/dashboard.mjs`, testés ; affichage **non vérifié dans un navigateur**).
+
+### Tests
+- 59 tests (5 de plus).
+
+## 0.7.1 — Diagnostic de l'indexation des PDF
+Rapport : « Missing or insufficient permissions » dans la console pendant l'indexation. **Cause non confirmée** (voir docs/PHASE7.md) ; ce correctif la rend identifiable.
+- Écoute Firestore refusée : le code d'erreur exact est affiché et une reconnexion avec un jeton neuf est tentée une fois par minute.
+- Indexation : une fiche refusée n'arrête plus tout ; arrêt après 3 échecs ; les fiches fautives sont nommées avec leur code d'erreur.
+- Pré-contrôle (`modules/rules-check.mjs`) : indique le champ d'une ancienne fiche qui ferait refuser toute écriture par les règles (les règles valident le document résultant). Un test vérifie que ses limites sont identiques à `firestore.rules`.
+
 ## 0.7.0 — Phase 7 (audit, finitions, journal serveur)
 
 ### Nouveautés (dans le code, **non vérifiées dans un navigateur** — voir docs/PHASE7.md)

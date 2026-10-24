@@ -27,4 +27,17 @@
 - [ ] Recherche d'un mot présent seulement dans un PDF indexé : la fiche apparaît avec un extrait « Dans le PDF »
 - [ ] Tableau de bord : panneaux « Échéances dépassées », « Documents par thème », « Fichiers les plus volumineux »
 
+## 0.8.0
+- [ ] Ajouter un document avec un fichier déjà présent : message « ressemble à un document déjà enregistré », annuler fonctionne, « OK » enregistre quand même
+- [ ] Filtres → « Recherches enregistrées » : enregistrer (nom + critères), la réappliquer, la supprimer ; absente sur un autre compte
+- [ ] Échéance (admin) : fiche → « Marquer comme terminée » ; elle disparaît du tableau de bord et de l'export .ics ; « rouvrir » la remet
+- [ ] Un utilisateur ordinaire ne voit pas le bouton « Marquer comme terminée »
+
+## Appareils réels (à cocher seulement si testés sur l'appareil, pas en émulation)
+- [ ] iPhone / Safari : connexion, recherche, aperçu PDF, téléchargement, frise (zoom au doigt), modales (clavier à l'écran)
+- [ ] iPad / Safari : mêmes tests, orientation portrait et paysage
+- [ ] Ordinateur : 3 largeurs d'écran, navigation au clavier (Tab, Entrée, Échap), focus visible
+- [ ] Réseau coupé pendant un envoi : message clair, réessai possible, pas de doublon
+- [ ] Session expirée : retour à la connexion sans perte de données saisies critiques
+
 Ne cochez que ce que vous avez réellement vérifié.

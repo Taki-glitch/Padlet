@@ -97,3 +97,52 @@ test("journal serveur : champs, rôles et absence de secret", () => {
   assert.throws(() => buildAuditFields({ action: "user.create", actorId: "a", newRole: "root" }), /Rôle/);
   assert.throws(() => buildAuditFields({ action: "user.create", actorId: "a", result: "ok" }), /Résultat/);
 });
+
+import { STRING_LIMITS, ruleViolations } from "../modules/rules-check.mjs";
+
+test("rules-check : les limites correspondent exactement à firestore.rules", () => {
+  const rules = readFileSync(new URL("../firestore.rules", import.meta.url), "utf8");
+  const fromRules = Object.fromEntries([...rules.matchAll(/optionalString\(data, '(\w+)', (\d+)\)/g)].map(([, key, max]) => [key, Number(max)]));
+  assert.deepEqual(fromRules, STRING_LIMITS);
+  assert.match(rules, /fileSize <= 52428800/);
+});
+
+test("rules-check : détecte ce qui ferait refuser l'écriture", () => {
+  assert.deepEqual(ruleViolations({ title: "ok", date: "2026-10-24", tags: ["a"], fileSize: 10, type: "document" }), []);
+  assert.match(ruleViolations({ title: "x".repeat(301) })[0], /title.*300/);
+  assert.match(ruleViolations({ date: "2026-10-24T10:00:00Z" })[0], /date.*10/);
+  assert.match(ruleViolations({ fileSize: "12" })[0], /fileSize/);
+  assert.match(ruleViolations({ type: "autre" })[0], /type/);
+  assert.match(ruleViolations({ color: null })[0], /pas du texte/);
+  assert.equal(ruleViolations({ title: "é".repeat(300) }).length, 0, "les caractères sont comptés, pas les octets");
+  assert.equal(ruleViolations({ tags: "a".repeat(2001) }).length, 1);
+  assert.equal(ruleViolations({ retentionMonths: 601 }).length, 1);
+});
+
+import { loadFirst, pdfIndexSummary, needsPdfIndexing } from "../modules/pdftext.mjs";
+import { themeCounts, largestFiles, overdueDeadlines } from "../modules/dashboard.mjs";
+
+test("pdf.js : bascule sur la deuxième source si la première échoue, erreur étiquetée si toutes échouent", async () => {
+  const calls = [];
+  const value = await loadFirst([async () => { calls.push("a"); throw new Error("bloqué"); }, async () => { calls.push("b"); return "pdfjs"; }]);
+  assert.equal(value, "pdfjs"); assert.deepEqual(calls, ["a", "b"]);
+  await assert.rejects(loadFirst([async () => { throw new Error("réseau"); }]), (error) => error.code === "pdfjs-load" && /réseau/.test(error.message));
+});
+
+test("indexation PDF : les anciens échecs (error) et les PDF jamais traités sont retentés", () => {
+  const list = [{ pdfTextStatus: "ok" }, { pdfTextStatus: "empty" }, { pdfTextStatus: "error" }, {}];
+  assert.deepEqual(list.map(needsPdfIndexing), [false, false, true, true]);
+  assert.deepEqual(pdfIndexSummary(list), { total: 4, ok: 1, empty: 1, todo: 2 });
+  assert.deepEqual(pdfIndexSummary([]), { total: 0, ok: 0, empty: 0, todo: 0 });
+});
+
+test("tableau de bord : thèmes, fichiers volumineux, échéances dépassées", () => {
+  const docs = [{ theme: "Santé" }, { theme: "Santé" }, { theme: "Santé" }, { theme: "Admin" }, {}, { theme: "  " }];
+  assert.deepEqual(themeCounts(docs), [{ title: "Santé", count: 3 }, { title: "Sans thème", count: 2 }, { title: "Admin", count: 1 }]);
+  assert.equal(themeCounts(docs, { limit: 1 }).length, 1);
+  const files = [{ title: "A", fileSize: 10 }, { title: "B", fileSize: 5000 }, { title: "C" }, { title: "D", fileSize: 0 }, { title: "E", fileSize: "9" }];
+  assert.deepEqual(largestFiles(files, 5).map((f) => f.title), ["B", "A"]);
+  const dl = [{ id: 1, date: "2026-10-23" }, { id: 2, date: "2026-10-24" }, { id: 3, date: "2026-10-01" }, { id: 4, date: "2026-09-01" }, { id: 5, date: "bad" }, { id: 6, date: "2026-12-01" }];
+  const late = overdueDeadlines(dl, "2026-10-24", (d) => d.date);
+  assert.deepEqual(late.map((d) => [d.id, d.daysLate]), [[1, 1], [3, 23]]);
+});

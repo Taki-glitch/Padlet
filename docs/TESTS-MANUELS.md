@@ -21,4 +21,10 @@
 - [ ] Journal : après un changement de rôle, une ligne « enregistré par le serveur » (après redéploiement d'`admin-users`)
 - [ ] Liste de non-régression de base : admin et utilisateur, corbeille et restauration, PDF et image, sauvegarde et restauration sur projet de test, calcul de l'espace
 
+## 0.7.2
+- [ ] Paramètres : la ligne sous « Indexer les PDF » indique le nombre de PDF, indexés, sans texte, à indexer
+- [ ] « Indexer… » : message final clair ; en cas d'échec, il nomme la fiche et la cause
+- [ ] Recherche d'un mot présent seulement dans un PDF indexé : la fiche apparaît avec un extrait « Dans le PDF »
+- [ ] Tableau de bord : panneaux « Échéances dépassées », « Documents par thème », « Fichiers les plus volumineux »
+
 Ne cochez que ce que vous avez réellement vérifié.

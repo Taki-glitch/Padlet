@@ -27,3 +27,28 @@ export function buildSnippet(text, terms, radius = 60) {
     const start = Math.max(0, at - radius), end = Math.min(source.length, at + radius);
     return `${start > 0 ? "…" : ""}${source.slice(start, end).trim()}${end < source.length ? "…" : ""}`;
 }
+
+// Essaie plusieurs sources de pdf.js (ex. cdnjs puis jsDelivr) : une seule source bloquée (réseau, bloqueur de publicités)
+// n'empêche plus l'indexation. Si toutes échouent : erreur de code « pdfjs-load ».
+export async function loadFirst(loaders) {
+    let last;
+    for (const load of loaders) {
+        try { return await load(); } catch (error) { last = error; }
+    }
+    const failure = new Error(`bibliothèque de lecture des PDF non chargée${last?.message ? ` (${last.message})` : ""}`);
+    failure.code = "pdfjs-load";
+    throw failure;
+}
+
+// Comptage pour l'affichage dans Paramètres. « à indexer » = jamais traité OU resté en échec (les échecs sont retentés).
+export function pdfIndexSummary(entries) {
+    const summary = { total: 0, ok: 0, empty: 0, todo: 0 };
+    for (const item of entries) {
+        summary.total += 1;
+        if (item.pdfTextStatus === "ok") summary.ok += 1;
+        else if (item.pdfTextStatus === "empty") summary.empty += 1;
+        else summary.todo += 1;
+    }
+    return summary;
+}
+export function needsPdfIndexing(item) { return item.pdfTextStatus !== "ok" && item.pdfTextStatus !== "empty"; }

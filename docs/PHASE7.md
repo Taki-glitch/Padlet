@@ -67,3 +67,12 @@ Tests [auto] : `tests/phase7.test.mjs` (9 tests) ; `npm run check` et `node --te
 
 ## 6. Retour arrière
 Voir `DEPLOIEMENT.md` §4. Ce lot ne modifie ni `firestore.rules`, ni les données, ni le format des fiches : `git revert` de la pull request suffit pour l'interface ; la fonction `admin-users` se redéploie depuis le commit précédent.
+
+## 7. Indexation des PDF (0.7.1 et 0.7.2)
+Symptôme signalé : l'indexation ne fonctionne pas ; une erreur « Missing or insufficient permissions » a été vue dans la console. **La cause exacte n'est pas confirmée** : les règles Firestore relues acceptent l'écriture `pdfText`/`pdfTextStatus` d'un administrateur (limites 20 000 et 10 caractères respectées par l'extraction).
+Causes plausibles, de la plus probable à la moins probable :
+1. une ancienne fiche contient un champ que les règles refusent (texte trop long, `fileSize` en texte…) : Firestore valide le document **résultant**, donc toute écriture sur cette fiche est refusée. Le pré-contrôle (0.7.1) nomme le champ ;
+2. jeton Firebase sans le rôle `admin` (session périmée) : reconnexion automatique (0.7.1) ;
+3. bibliothèque pdf.js non chargée (source bloquée) : seconde source (0.7.2) ;
+4. échecs précédents mémorisés (`error`) donc jamais retentés : corrigé (0.7.2).
+À faire après déploiement : Paramètres → « Indexer les PDF non indexés », puis **lire le message affiché** : il nomme la fiche et la cause.

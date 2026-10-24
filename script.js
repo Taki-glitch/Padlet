@@ -29,7 +29,9 @@ import { APP_VERSION } from "./modules/version.mjs";
 import { searchTerms, hiddenMatchFields } from "./modules/search.mjs";
 import { buildCalendarEvents, buildIcs } from "./modules/ics.mjs";
 import { validatePasswordChange } from "./modules/password.mjs";
-import { extractPdfText, buildSnippet } from "./modules/pdftext.mjs";
+import { ruleViolations } from "./modules/rules-check.mjs";
+import { extractPdfText, buildSnippet, loadFirst, pdfIndexSummary, needsPdfIndexing } from "./modules/pdftext.mjs";
+import { themeCounts, largestFiles, overdueDeadlines } from "./modules/dashboard.mjs";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -257,6 +259,27 @@ async function refreshAdminFirestoreSession() {
     }
 }
 
+// Une écoute refusée par Firestore est définitivement fermée par le SDK : la liste ne se met plus à jour. On retente UNE
+// fois par minute avec un jeton neuf ; sinon on affiche le code d'erreur exact au lieu d'un message générique.
+let lastListenerRecovery = 0;
+async function recoverFirestoreListener(error) {
+    const code = error?.code || "inconnu";
+    if (!currentUser || code !== "permission-denied" || Date.now() - lastListenerRecovery < 60000) {
+        setStatus(`Connexion Firestore interrompue (code : ${code}). Rechargez la page ; si cela persiste, vérifiez les règles Firestore publiées.`, true);
+        return;
+    }
+    lastListenerRecovery = Date.now();
+    setStatus("Connexion Firestore refusée (permission-denied). Nouvelle tentative avec un jeton neuf…", true);
+    try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (!session) throw new Error("Session Supabase absente.");
+        await startFirestoreSession(session);
+    } catch (retryError) {
+        console.error("Reconnexion Firestore impossible :", retryError);
+        setStatus("Reconnexion impossible. Rechargez la page ou reconnectez-vous ; si cela persiste, vérifiez les règles Firestore publiées.", true);
+    }
+}
+
 async function startFirestoreSession(session) {
     if (!session?.access_token || session.user.id !== currentUser?.id) throw new Error("Session Supabase invalide. Reconnectez-vous.");
     setStatus("Connexion sécurisée à Firestore…");
@@ -293,8 +316,9 @@ async function startFirestoreSession(session) {
             render();
             setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`);
             openFromHash();
+            updatePdfIndexSummary();
         },
-        (error) => { console.error(error); setStatus("Connexion Firestore impossible. Vérifiez votre session Firebase et vos règles Firestore.", true); });
+        (error) => { console.error("Écoute Firestore interrompue :", error?.code, error); recoverFirestoreListener(error); });
     await refreshStorageUsage();
 }
 
@@ -939,6 +963,10 @@ function renderDashboard() {
     renderDashboardList($("dashboard-expirations"), upcoming, "Aucun document n’expire dans les 30 prochains jours.", (item) => `${expirationLabel(item)} · ${dateLabel(expirationDate(item))}`, openReadModal);
     const recent = [...documents].sort((a, b) => String(b.publishedAt || b.date || "").localeCompare(String(a.publishedAt || a.date || ""))).slice(0, 5);
     renderDashboardList($("dashboard-recent"), recent, "Aucun document pour le moment.", (item) => `Document du ${dateLabel(item.date)} · ajouté le ${dateLabel(String(item.publishedAt || item.date || "").slice(0, 10))}`, openReadModal);
+    const overdue = overdueDeadlines(items.filter((item) => item.type === "deadline"), localDateValue(new Date()), timelineDate);
+    renderDashboardList($("dashboard-overdue"), overdue, "Aucune échéance dépassée ces 30 derniers jours.", (item) => `En retard de ${item.daysLate} jour${item.daysLate > 1 ? "s" : ""} · ${dateLabel(timelineDate(item))}`, null);
+    renderDashboardList($("dashboard-themes"), themeCounts(documents).map((entry) => ({ type: "document", title: entry.title, count: entry.count })), "Aucun document pour le moment.", (entry) => `${entry.count} document${entry.count > 1 ? "s" : ""}`, null);
+    renderDashboardList($("dashboard-largest"), largestFiles(documents), "Aucun fichier enregistré.", (item) => formatMegabytes(item.fileSize), openReadModal);
     renderDashboardList($("dashboard-incomplete"), incomplete.slice(0, 8), "Tous les documents sont complets.", (item) => `Sans ${documentGaps(item).join(", ")}`, openReadModal);
 }
 
@@ -2033,33 +2061,62 @@ function pdfSnippetFor(item) {
     return terms.length && item.pdfText ? buildSnippet(item.pdfText, terms) : "";
 }
 let pdfjsPromise = null;
-function loadPdfjs() {   // chargé seulement à l'indexation (pdf.js 4.4.168, licence Apache-2.0) ; worker via un Blob pour contourner la restriction d'origine
-    pdfjsPromise ||= (async () => {
-        const base = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/";
+const PDFJS_BASES = ["https://cdnjs.cloudflare.com/ajax/libs/pdf.js/4.4.168/", "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.4.168/build/"];
+function loadPdfjs() {   // chargé seulement à l'indexation (pdf.js 4.4.168, licence Apache-2.0, deux sources) ; worker via un Blob pour contourner la restriction d'origine
+    pdfjsPromise ||= loadFirst(PDFJS_BASES.map((base) => async () => {
         const pdfjs = await import(`${base}pdf.min.mjs`);
         pdfjs.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([`import "${base}pdf.worker.min.mjs";`], { type: "text/javascript" }));
         return pdfjs;
-    })();
+    }));
     pdfjsPromise.catch(() => { pdfjsPromise = null; });
     return pdfjsPromise;
 }
+function pdfError(error, code, message) { const failure = new Error(message ?? error?.message ?? "erreur inconnue"); failure.code = code; failure.cause = error; return failure; }
 async function indexPdfText(item) {
+    let bytes;
+    try { bytes = await readStorageFile(item.filePath); }
+    catch (error) { throw pdfError(error, "storage-read", `lecture du fichier impossible (${error?.message || "inconnue"})`); }
     let result;
-    try { result = await extractPdfText(await readStorageFile(item.filePath), loadPdfjs); }
-    catch (error) { console.warn("Extraction PDF impossible :", error); result = { text: "", status: "error" }; }
+    try { result = await extractPdfText(bytes, loadPdfjs); }
+    catch (error) {
+        console.warn("Extraction PDF impossible :", error);
+        const libraryProblem = error?.code === "pdfjs-load" || /worker|dynamically imported|Failed to fetch/i.test(String(error?.message));
+        throw pdfError(error, libraryProblem ? "pdfjs-load" : "extract-failed", libraryProblem ? "bibliothèque de lecture des PDF non chargée" : `PDF illisible (${error?.message || "inconnu"})`);
+    }
+    // Les règles valident le document résultant : on vérifie avant d'écrire pour nommer le champ fautif.
+    const problems = ruleViolations({ ...item, pdfText: result.text, pdfTextStatus: result.status });
+    if (problems.length) throw pdfError(null, "rules-precheck", `les règles Firestore refuseraient toute écriture sur cette fiche : ${problems.join(" ; ")}`);
     await setDoc(doc(db, "padletItems", item.id), { pdfText: result.text, pdfTextStatus: result.status }, { merge: true });
     return result.status;
 }
+let pdfIndexRunning = false;
+function updatePdfIndexSummary() {
+    if (pdfIndexRunning) return;
+    const summary = pdfIndexSummary(items.filter(isPdfItem));
+    $("pdf-index-status").textContent = summary.total ? `${summary.total} PDF · ${summary.ok} indexé(s) · ${summary.empty} sans texte (scanné) · ${summary.todo} à indexer.` : "Aucun PDF.";
+}
 $("pdf-index-run").addEventListener("click", async () => {
     if (!requireAdmin() || !supabase) return;
-    const status = $("pdf-index-status"), button = $("pdf-index-run"), todo = items.filter((item) => isPdfItem(item) && !item.pdfTextStatus);
+    const status = $("pdf-index-status"), button = $("pdf-index-run"), todo = items.filter((item) => isPdfItem(item) && needsPdfIndexing(item));
     if (!todo.length) { status.textContent = "Tous les PDF sont déjà indexés."; return; }
-    button.disabled = true; const counts = { ok: 0, empty: 0, error: 0 };
+    button.disabled = true; pdfIndexRunning = true;
+    const counts = { ok: 0, empty: 0 }, unreadable = [], failures = [];
     try {
         await refreshAdminFirestoreSession();
-        for (const [index, item] of todo.entries()) { status.textContent = `Indexation ${index + 1}/${todo.length} : ${item.title || item.id}`; counts[await indexPdfText(item)] += 1; }
-        status.textContent = `Terminé : ${counts.ok} indexé(s), ${counts.empty} sans texte (PDF scanné), ${counts.error} en échec. Les échecs peuvent être relancés en rechargeant la page.`;
+        for (const [index, item] of todo.entries()) {
+            status.textContent = `Indexation ${index + 1}/${todo.length} : ${item.title || item.id}`;
+            try { counts[await indexPdfText(item)] += 1; }
+            catch (error) {
+                console.error("Indexation impossible pour", item.id, error?.code, error);
+                const label = `« ${item.title || item.id} »`;
+                if (error?.code === "extract-failed") { unreadable.push(label); continue; }
+                failures.push(`${label} : ${error?.message || "erreur inconnue"}`);
+                if (error?.code === "pdfjs-load" || failures.length >= 3) break;   // inutile d'insister : même cause pour tous les PDF
+            }
+        }
+        const stopped = failures.length ? "Arrêté" : "Terminé";
+        status.textContent = `${stopped} : ${counts.ok} indexé(s), ${counts.empty} sans texte (PDF scanné), ${unreadable.length} illisible(s), ${failures.length} problème(s).${unreadable.length ? ` Illisibles : ${unreadable.join(", ")}.` : ""}${failures.length ? ` ${failures.join(" · ")}` : ""}`;
         logActivity({ action: "pdf.index", resourceType: "document", count: counts.ok });
     } catch (error) { console.error(error); status.textContent = `Indexation interrompue : ${error.message || "erreur inconnue"}`; }
-    finally { button.disabled = false; }
+    finally { button.disabled = false; pdfIndexRunning = false; }
 });

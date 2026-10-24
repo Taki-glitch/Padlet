@@ -5,7 +5,14 @@ import { APP_VERSION } from "../modules/version.mjs";
 import { foldSearchText, searchTerms, hiddenMatchFields } from "../modules/search.mjs";
 import { escapeIcsText, foldIcsLine, buildCalendarEvents, buildIcs } from "../modules/ics.mjs";
 import { validatePasswordChange } from "../modules/password.mjs";
-import { buildAuditFields } from "../supabase/functions/_shared/auditlog.mjs";
+import { stripTypeScriptTypes } from "node:module";
+
+// Le journal d'audit est intégré à admin-users/index.ts (un seul fichier, comme déployé via l'éditeur Supabase) :
+// le test en extrait le bloc, retire les types et l'exécute, donc teste le code réellement déployé.
+const adminSource = readFileSync(new URL("../supabase/functions/admin-users/index.ts", import.meta.url), "utf8");
+const auditBlock = adminSource.slice(adminSource.indexOf("const AUDIT_ACTIONS"), adminSource.indexOf("// --- fin du journal"));
+assert.ok(auditBlock.includes("function buildAuditFields"), "bloc d'audit introuvable dans admin-users/index.ts");
+const { buildAuditFields } = await import("data:text/javascript," + encodeURIComponent(`${stripTypeScriptTypes(auditBlock)}\nexport { buildAuditFields };`));
 
 test("la version affichée correspond à package.json", () => {
   assert.equal(APP_VERSION, JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version);
@@ -159,4 +166,66 @@ test("fiche ancienne avec retentionMonths nul : nettoyée à l'écriture au lieu
   assert.deepEqual(nullFieldsToDelete({ retentionMonths: 24 }, { retentionMonths: null }), ["retentionMonths"], "formulaire sans durée");
   assert.deepEqual(nullFieldsToDelete({}, {}), []);
   assert.equal(effectiveDocument({ retentionMonths: null, title: "t" }, { deletedAt: "2026-10-24" }).retentionMonths, undefined);
+});
+
+import { scanText } from "../scripts/check-secrets.mjs";
+const fakeJwt = (role) => `eyJhbGciOiJIUzI1NiJ9.${Buffer.from(JSON.stringify({ role })).toString("base64url")}.c2lnbmF0dXJlLWZpY3RpZg`;
+
+test("détection de secrets : clés privées et service_role refusés, clé publique anon acceptée", () => {
+  assert.deepEqual(scanText("pas de secret ici"), []);
+  assert.deepEqual(scanText(`clé = ${fakeJwt("anon")}`), [], "la clé anon est publique par conception");
+  assert.deepEqual(scanText(`clé = ${fakeJwt("service_role")}`), ["jeton Supabase « service_role »"]);
+  assert.deepEqual(scanText(["-----BEGIN", "PRIVATE KEY-----\\n" + "A".repeat(60)].join(" ")), ["clé privée (PEM)"]);
+  assert.deepEqual(scanText(["-----BEGIN", "PRIVATE KEY-----\\n…"].join(" ")), [], "exemple de documentation");
+  assert.deepEqual(scanText(`sb_${"secret"}_${"a".repeat(20)}`), ["clé secrète Supabase (sb_secret_…)"]);
+});
+
+import { sha256Hex, findDuplicates } from "../modules/duplicates.mjs";
+import { sanitizeSaved, addSaved, removeSaved, SAVED_SEARCH_MAX } from "../modules/savedSearches.mjs";
+import { isDone } from "../modules/dashboard.mjs";
+
+test("sha256 : empreinte connue", async () => {
+  assert.equal(await sha256Hex(new TextEncoder().encode("abc")), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+});
+
+test("doublons : identique (empreinte), probable (ancienne fiche), pas de faux positif", () => {
+  const items = [
+    { id: "1", type: "document", filePath: "a", title: "A", sha256: "aaa", fileName: "x.pdf", fileSize: 10 },
+    { id: "2", type: "document", filePath: "b", title: "B", fileName: "Rapport.PDF", fileSize: 500 },
+    { id: "3", type: "document", filePath: "c", title: "C", sha256: "bbb", fileName: "Rapport.pdf", fileSize: 500 },
+    { id: "4", type: "deadline", title: "échéance" },
+    { id: "5", type: "document", title: "sans fichier", fileName: "Rapport.pdf", fileSize: 500 }
+  ];
+  const same = findDuplicates(items, { sha256: "aaa", fileName: "autre.pdf", fileSize: 10 });
+  assert.deepEqual(same.map((d) => [d.item.id, d.certainty]), [["1", "identique"]]);
+  const probable = findDuplicates(items, { sha256: "zzz", fileName: "rapport.pdf", fileSize: 500 });
+  assert.deepEqual(probable.map((d) => [d.item.id, d.certainty]), [["2", "probable"]], "même nom+taille mais empreinte différente (3) n'est PAS un doublon");
+  assert.deepEqual(findDuplicates(items, { sha256: "aaa", fileName: "x.pdf", fileSize: 10 }, "1"), [], "la fiche en cours de modification est ignorée");
+  assert.deepEqual(findDuplicates(items, { sha256: "q", fileName: "", fileSize: 0 }), []);
+});
+
+test("recherches enregistrées : ajout, remplacement, validation, limite, suppression", () => {
+  assert.match(addSaved([], { name: " ", query: "a" }).error, /nom/);
+  assert.match(addSaved([], { name: "Vide", query: "  ", sort: "date-desc" }).error, /critère/);
+  let { list } = addSaved([], { name: "PDF santé", query: "pdf santé", theme: "Santé", sort: "date-desc" });
+  ({ list } = addSaved(list, { name: "Favoris", favorites: "favorites" }));
+  assert.deepEqual(list.map((s) => s.name), ["Favoris", "PDF santé"]);
+  ({ list } = addSaved(list, { name: "pdf SANTÉ", query: "nouveau" }));
+  assert.equal(list.length, 2, "même nom (casse ignorée) : remplacée");
+  assert.equal(list.find((s) => s.name === "pdf SANTÉ").query, "nouveau");
+  assert.deepEqual(removeSaved(list, "FAVORIS").map((s) => s.name), ["pdf SANTÉ"]);
+  assert.deepEqual(sanitizeSaved("pas une liste"), []);
+  assert.deepEqual(sanitizeSaved([null, 3, { name: "" }, { name: "ok", favorites: "x", sort: "" }]), [{ name: "ok", query: "", theme: "", tag: "", favorites: "", sort: "date-desc" }]);
+  const many = Array.from({ length: SAVED_SEARCH_MAX }, (_, i) => ({ name: `r${i}`, query: "q" }));
+  assert.match(addSaved(many, { name: "de trop", query: "q" }).error, /Limite/);
+  assert.ok(addSaved(many, { name: "r3", query: "autre" }).list, "remplacer à la limite reste possible");
+});
+
+test("échéance terminée : exclue de l'export .ics et du comptage, anciennes fiches « à faire »", () => {
+  assert.equal(isDone({ done: true }), true);
+  assert.equal(isDone({ done: false }), false);
+  assert.equal(isDone({}), false);
+  assert.equal(isDone(undefined), false);
+  const { events } = buildCalendarEvents([{ id: "a", type: "deadline", title: "Faite", date: "2026-11-01", done: true }, { id: "b", type: "deadline", title: "À faire", date: "2026-11-02" }]);
+  assert.deepEqual(events.map((e) => e.summary), ["À faire"]);
 });

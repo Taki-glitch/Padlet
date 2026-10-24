@@ -25,6 +25,10 @@ import { reconcile } from "./modules/reconcile.mjs";
 import { buildActivityEvent, ACTIVITY_RETENTION_DAYS } from "./modules/activity.mjs";
 import { checkUpload, createUrlResolver } from "./modules/files.mjs";
 import { linkSegments, isLongText } from "./modules/links.mjs";
+import { APP_VERSION } from "./modules/version.mjs";
+import { searchTerms, hiddenMatchFields } from "./modules/search.mjs";
+import { buildCalendarEvents, buildIcs } from "./modules/ics.mjs";
+import { validatePasswordChange } from "./modules/password.mjs";
 import { extractPdfText, buildSnippet } from "./modules/pdftext.mjs";
 
 const app = initializeApp(firebaseConfig);
@@ -288,10 +292,70 @@ async function startFirestoreSession(session) {
             [...selectedDocumentIds].forEach((id) => { if (!availableIds.has(id)) selectedDocumentIds.delete(id); });
             render();
             setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`);
+            openFromHash();
         },
         (error) => { console.error(error); setStatus("Connexion Firestore impossible. Vérifiez votre session Firebase et vos règles Firestore.", true); });
     await refreshStorageUsage();
 }
+
+// --- Lien direct vers une fiche : #fiche=<id>. Seules les fiches actives déjà autorisées par Firestore sont ouvertes
+// (une fiche en corbeille ou inexistante affiche « introuvable ») ; aucun contenu n'est exposé par l'URL elle-même.
+let handledHashId = "";
+function hashItemId() { const match = /^#fiche=([A-Za-z0-9_-]{1,128})$/.exec(window.location.hash); return match ? match[1] : ""; }
+function openFromHash() {
+    const id = hashItemId();
+    if (!id || id === handledHashId || !currentUser) return;
+    handledHashId = id;
+    const item = items.find((entry) => entry.id === id);
+    if (item) openReadModal(item); else setStatus("Ce lien pointe vers une fiche introuvable, supprimée ou non accessible.", true);
+}
+window.addEventListener("hashchange", () => { handledHashId = ""; openFromHash(); });
+async function copyReadLink() {
+    if (!readModalItem?.id) return;
+    const link = `${window.location.origin}${window.location.pathname}#fiche=${readModalItem.id}`;
+    try { await navigator.clipboard.writeText(link); setStatus("Lien copié dans le presse-papiers."); }
+    catch { setStatus(`Copie automatique impossible. Lien : ${link}`, true); }
+}
+
+// --- Export .ics (échéances + expirations de documents) : fichier ponctuel, pas de synchronisation.
+$("export-calendar").addEventListener("click", () => {
+    const { events, skipped } = buildCalendarEvents(items);
+    if (!events.length) { $("settings-status").textContent = "Aucune échéance ou expiration datée à exporter."; return; }
+    const blob = new Blob([buildIcs(events)], { type: "text/calendar;charset=utf-8" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob); link.download = `padlet-echeances-${localDateValue(new Date())}.ics`;
+    document.body.append(link); link.click(); link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    $("settings-status").textContent = `${events.length} événement${events.length > 1 ? "s" : ""} exporté${events.length > 1 ? "s" : ""}${skipped.length ? ` · ${skipped.length} ignoré${skipped.length > 1 ? "s" : ""} (date invalide)` : ""}.`;
+});
+
+// --- Changement de mot de passe personnel : réauthentification (mot de passe actuel), puis Supabase Auth.
+// Le mot de passe n'est jamais stocké ni journalisé ; le succès n'est affiché qu'après la réponse du serveur.
+function setPasswordStatus(message, isError = false) { const el = $("password-status"); el.textContent = message; el.classList.toggle("error", isError); }
+function closePasswordModal() { $("password-form").reset(); setPasswordStatus(""); for (const id of ["password-current", "password-new", "password-confirm"]) $(id).type = "password"; $("password-modal").classList.add("hidden"); $("btn-change-password").focus(); }
+$("btn-change-password").addEventListener("click", () => { if (!currentUser) return; setPasswordStatus(""); $("password-modal").classList.remove("hidden"); $("password-current").focus(); });
+$("close-password").addEventListener("click", closePasswordModal);
+$("cancel-password").addEventListener("click", closePasswordModal);
+$("password-show").addEventListener("change", (event) => { for (const id of ["password-current", "password-new", "password-confirm"]) $(id).type = event.target.checked ? "text" : "password"; });
+$("password-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = $("password-submit");
+    if (submit.disabled || !currentUser || !currentProfile) return;
+    const values = { current: $("password-current").value, next: $("password-new").value, confirm: $("password-confirm").value };
+    const problem = validatePasswordChange(values);
+    if (problem) { setPasswordStatus(problem, true); return; }
+    submit.disabled = true; submit.textContent = "Modification…"; setPasswordStatus("");
+    try {
+        const { error: reauthError } = await authGateway.signInWithUsername(currentProfile.username, values.current);
+        if (reauthError) { setPasswordStatus("Le mot de passe actuel est incorrect.", true); return; }
+        const { error } = await supabase.auth.updateUser({ password: values.next });
+        if (error) { setPasswordStatus("Le mot de passe n’a pas pu être modifié. Réessayez ou choisissez un mot de passe différent.", true); return; }
+        closePasswordModal();
+        $("settings-status").textContent = "Mot de passe modifié.";
+    } catch (error) { console.error("Changement de mot de passe impossible."); setPasswordStatus("Connexion indisponible. Réessayez plus tard.", true); }
+    finally { submit.disabled = false; submit.textContent = "Modifier"; $("password-current").value = ""; $("password-new").value = ""; $("password-confirm").value = ""; }
+});
+$("app-version").textContent = `Version ${APP_VERSION}`;
 
 async function initialiseAuthentication() {
     if (!supabase) { setStatus("La configuration Supabase est absente.", true); return; }
@@ -972,6 +1036,8 @@ function createDocumentCard(item) {
         more.addEventListener("click", (event) => { event.stopPropagation(); openReadModal(item); });
         card.append(more);
     }
+    const hiddenMatches = hiddenMatchFields(item, searchTerms(searchInput.value));
+    if (hiddenMatches.length) { const hint = document.createElement("p"); hint.className = "search-hint"; hint.textContent = `Trouvé aussi dans : ${hiddenMatches.join(", ")}`; card.append(hint); }
     const pdfSnippet = pdfSnippetFor(item);
     if (pdfSnippet) { const found = document.createElement("p"); found.className = "pdf-snippet"; found.textContent = `Dans le PDF : ${pdfSnippet}`; card.append(found); }
     if (tags.childElementCount) card.append(tags);
@@ -1625,6 +1691,7 @@ $("clear-selection").addEventListener("click", () => {
 });
 deleteSelectedButton.addEventListener("click", removeSelectedDocuments);
 $("reset-filters").addEventListener("click", resetFilters);
+$("read-copy-link").addEventListener("click", copyReadLink);
 $("read-favorite").addEventListener("click", () => {
     if (!readModalItem || readModalItem.type !== "document") return;
     toggleFavorite(readModalItem);
@@ -1652,7 +1719,7 @@ window.addEventListener("keydown", (event) => {
         return;
     }
     if (event.key === "Escape") {
-        closeFormIfConfirmed(formModal, docForm, docFormBaseline); closeReadModal(); closeFormIfConfirmed(timelineFormModal, timelineForm, timelineFormBaseline); $("admin-users-modal").classList.add("hidden");
+        closeFormIfConfirmed(formModal, docForm, docFormBaseline); closeReadModal(); closeFormIfConfirmed(timelineFormModal, timelineForm, timelineFormBaseline); $("admin-users-modal").classList.add("hidden"); if (!$("password-modal").classList.contains("hidden")) closePasswordModal();
         return;
     }
     if (event.key !== "Tab" || readModal.classList.contains("hidden")) return;
@@ -1934,7 +2001,7 @@ $("activity-load").addEventListener("click", async () => {
             const e = entry.data(), row = document.createElement("div"); row.className = "dashboard-list-item";
             const when = e.at?.toDate ? e.at.toDate().toLocaleString("fr-FR") : "…";
             const title = document.createElement("strong"); title.textContent = `${e.action}${e.result === "failure" ? " (échec)" : ""}`;
-            const info = document.createElement("small"); info.textContent = `${when} · ${e.label || e.resourceId || e.resourceType}${Number.isInteger(e.count) ? ` · ${e.count}` : ""} · par ${String(e.userId).slice(0, 8)}`;
+            const info = document.createElement("small"); info.textContent = `${when} · ${e.label || e.resourceId || e.resourceType}${Number.isInteger(e.count) ? ` · ${e.count}` : ""} · par ${String(e.userId).slice(0, 8)}${e.source === "server" ? " · enregistré par le serveur" : ""}`;
             row.append(title, info); list.append(row);
         });
         const status = await getDoc(doc(db, "system", "lastPurge")).catch(() => null);

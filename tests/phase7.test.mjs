@@ -146,3 +146,17 @@ test("tableau de bord : thèmes, fichiers volumineux, échéances dépassées", 
   const late = overdueDeadlines(dl, "2026-10-24", (d) => d.date);
   assert.deepEqual(late.map((d) => [d.id, d.daysLate]), [[1, 1], [3, 23]]);
 });
+
+import { nullFieldsToDelete, effectiveDocument } from "../modules/rules-check.mjs";
+
+test("fiche ancienne avec retentionMonths nul : nettoyée à l'écriture au lieu d'être refusée par les règles", () => {
+  const stored = { id: "a", type: "document", title: "Liste RPP", retentionMonths: null, expiresAt: null };
+  const patch = { pdfText: "texte", pdfTextStatus: "ok" };
+  assert.equal(ruleViolations({ ...stored, ...patch }).length, 1, "avant nettoyage : refusé");
+  assert.deepEqual(nullFieldsToDelete(stored, patch), ["retentionMonths"]);
+  assert.deepEqual(ruleViolations(effectiveDocument(stored, patch)), [], "après nettoyage : accepté");
+  assert.deepEqual(nullFieldsToDelete({ retentionMonths: 24 }, { title: "x" }), []);
+  assert.deepEqual(nullFieldsToDelete({ retentionMonths: 24 }, { retentionMonths: null }), ["retentionMonths"], "formulaire sans durée");
+  assert.deepEqual(nullFieldsToDelete({}, {}), []);
+  assert.equal(effectiveDocument({ retentionMonths: null, title: "t" }, { deletedAt: "2026-10-24" }).retentionMonths, undefined);
+});

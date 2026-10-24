@@ -2,6 +2,12 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.7.3 — Cause trouvée : fiches avec « retentionMonths: null »
+
+### Correction importante
+- Les règles Firestore refusent `retentionMonths: null` (ni nombre ni texte). L'ancien formulaire enregistrait cette valeur quand la durée de conservation était vide. Conséquence : toute écriture sur une telle fiche était refusée — **indexation PDF** (3 fiches signalées), mais aussi modification, mise à la corbeille, restauration et recalcul d'expiration. Désormais toutes les écritures sur `padletItems` passent par `mergeItem()`, qui supprime ce champ nul (`deleteField`) au passage. Le formulaire n'enregistre plus de nul non plus. Aucune modification des règles Firestore ni des données à faire à la main : les fiches se réparent à leur prochaine écriture.
+- Test ajouté (60 tests).
+
 ## 0.7.2 — Indexation des PDF fiabilisée, tableau de bord
 
 Cumule 0.7.1 (diagnostic) : si vous êtes en 0.7.0, ce lot contient les deux.

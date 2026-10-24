@@ -29,7 +29,7 @@ import { APP_VERSION } from "./modules/version.mjs";
 import { searchTerms, hiddenMatchFields } from "./modules/search.mjs";
 import { buildCalendarEvents, buildIcs } from "./modules/ics.mjs";
 import { validatePasswordChange } from "./modules/password.mjs";
-import { ruleViolations } from "./modules/rules-check.mjs";
+import { ruleViolations, nullFieldsToDelete, effectiveDocument } from "./modules/rules-check.mjs";
 import { extractPdfText, buildSnippet, loadFirst, pdfIndexSummary, needsPdfIndexing } from "./modules/pdftext.mjs";
 import { themeCounts, largestFiles, overdueDeadlines } from "./modules/dashboard.mjs";
 
@@ -878,7 +878,7 @@ function renderAdminExpirationReview() {
                     repair.disabled = true;
                     try {
                         await refreshAdminFirestoreSession();
-                        await setDoc(doc(db, "padletItems", item.id), { expiresAt: correctedDate }, { merge: true });
+                        await mergeItem(item.id, { expiresAt: correctedDate });
                         await logActivity({ action: "document.expiry-recalculate", resourceType: "document", resourceId: item.id, label: item.title });
                         setStatus(`Échéance corrigée au ${dateLabel(correctedDate)}.`);
                     } catch (error) { console.error("Correction d’échéance impossible.", error); setStatus("Impossible de corriger l’échéance.", true); }
@@ -1350,11 +1350,11 @@ docForm.addEventListener("submit", async (event) => {
             : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim(), theme: deleteField(), tags: deleteField(), summary: deleteField(), content: deleteField(), publishedAt: deleteField(), retentionMonths: deleteField(), expiresAt: deleteField(), fileUrl: deleteField(), filePath: deleteField(), fileName: deleteField(), fileType: deleteField(), fileSize: deleteField() };
         if (type === "document" && item.expiresAt && item.expiresAt < new Date().toISOString().slice(0, 10) && !window.confirm("L’échéance de ce document est déjà passée : il sera supprimé à la prochaine purge automatique. Enregistrer quand même ?")) throw new Error("Enregistrement annulé : modifiez la date du document ou la durée de conservation.");
         const wasNew = !items.some((entry) => entry.id === id), previousPath = items.find((entry) => entry.id === id)?.filePath;
-        await setDoc(doc(db, "padletItems", id), item, { merge: true });
+        await mergeItem(id, item);
         await logActivity({ action: wasNew ? "document.create" : "document.update", resourceType: type, resourceId: id, label: item.title });
         if (item.filePath && item.filePath !== previousPath) {
             if (isPdfItem(item)) indexPdfText(item).catch((error) => console.warn("Indexation PDF impossible.", error));
-            else if (previousPath) setDoc(doc(db, "padletItems", id), { pdfText: deleteField(), pdfTextStatus: deleteField() }, { merge: true }).catch(() => {});
+            else if (previousPath) mergeItem(id, { pdfText: deleteField(), pdfTextStatus: deleteField() }).catch(() => {});
         }
         if (type === "deadline" || (file.filePath && file.filePath !== oldFilePath)) await removeSupabaseFile(oldFilePath);
         formModal.classList.add("hidden"); setStatus("Élément enregistré en ligne."); await refreshStorageUsage();
@@ -1379,12 +1379,12 @@ timelineForm.addEventListener("submit", async (event) => {
     const content = $("timeline-content").value.trim();
     try {
         await refreshAdminFirestoreSession();
-        await setDoc(doc(db, "padletItems", id), {
+        await mergeItem(id, {
             timelineDate: date === item.date ? "" : date,
             timelineTitle: title === item.title ? "" : title,
             timelineContent: content === timelineBaseContent(item) ? "" : content,
             timelineColor: $("timeline-color").value
-        }, { merge: true });
+        });
         timelineFormModal.classList.add("hidden");
         setStatus("Personnalisation de la frise enregistrée.");
     } catch (error) {
@@ -1409,7 +1409,7 @@ async function deleteItemRecord(item, { sessionChecked = false } = {}) {
     if (!requireAdmin()) throw new Error("Cette action est réservée aux administrateurs.");
     if (!sessionChecked) await refreshAdminFirestoreSession();
     // Suppression douce : la fiche et son fichier sont conservés 30 jours (voir la corbeille dans les Paramètres).
-    await setDoc(doc(db, "padletItems", item.id), { deletedAt: new Date().toISOString(), deletedBy: currentUser?.id || null }, { merge: true });
+    await mergeItem(item.id, { deletedAt: new Date().toISOString(), deletedBy: currentUser?.id || null });
     await logActivity({ action: "document.trash", resourceType: item.type === "deadline" ? "deadline" : "document", resourceId: item.id, label: item.title });
 }
 
@@ -1911,7 +1911,7 @@ $("restore-run").addEventListener("click", async () => {
                 if (error && !/already exists|duplicate/i.test(error.message || "") && String(error.statusCode) !== "409") throw error;
                 return supabase.storage.from("documents").getPublicUrl(path).data.publicUrl;
             },
-            saveItem: (id, item) => setDoc(doc(db, "padletItems", id), item, { merge: true })
+            saveItem: (id, item) => mergeItem(id, item)
         });
         status.textContent = `Restauration terminée : ${report.restored.length} restaurée(s), ${report.skipped.length} ignorée(s), ${report.failed.length} en échec.` + report.failed.slice(0, 5).map((f) => ` [${f.label} : ${f.reason}]`).join("") + (report.failed.length ? " Relancez en mode Fusion pour reprendre sans doublon." : "");
         logActivity({ action: "backup.restore", resourceType: "backup", result: report.failed.length ? "failure" : "success", count: report.restored.length });
@@ -1941,7 +1941,7 @@ async function restoreFromTrash(item) {
     const status = $("trash-status");
     try {
         await refreshAdminFirestoreSession();
-        await setDoc(doc(db, "padletItems", item.id), { deletedAt: deleteField(), deletedBy: deleteField() }, { merge: true });
+        await mergeItem(item.id, { deletedAt: deleteField(), deletedBy: deleteField() });
         await logActivity({ action: "document.restore", resourceType: item.type === "deadline" ? "deadline" : "document", resourceId: item.id, label: item.title });
         status.textContent = `« ${item.title || "Élément"} » a été restauré.`;
     } catch (error) { console.error(error); status.textContent = `Restauration impossible : ${error.message || "erreur inconnue"}`; }
@@ -2071,6 +2071,14 @@ function loadPdfjs() {   // chargé seulement à l'indexation (pdf.js 4.4.168, l
     pdfjsPromise.catch(() => { pdfjsPromise = null; });
     return pdfjsPromise;
 }
+// Toutes les écritures « merge » sur padletItems passent ici : les anciennes fiches avec « retentionMonths: null » (refusé par
+// les règles Firestore, qui valident le document résultant) sont nettoyées au passage au lieu de bloquer l'écriture.
+function mergeItem(id, data) {
+    const stored = items.find((entry) => entry.id === id) || trashItems.find((entry) => entry.id === id) || {};
+    const patch = { ...data };
+    for (const key of nullFieldsToDelete(stored, data)) patch[key] = deleteField();
+    return setDoc(doc(db, "padletItems", id), patch, { merge: true });
+}
 function pdfError(error, code, message) { const failure = new Error(message ?? error?.message ?? "erreur inconnue"); failure.code = code; failure.cause = error; return failure; }
 async function indexPdfText(item) {
     let bytes;
@@ -2084,9 +2092,10 @@ async function indexPdfText(item) {
         throw pdfError(error, libraryProblem ? "pdfjs-load" : "extract-failed", libraryProblem ? "bibliothèque de lecture des PDF non chargée" : `PDF illisible (${error?.message || "inconnu"})`);
     }
     // Les règles valident le document résultant : on vérifie avant d'écrire pour nommer le champ fautif.
-    const problems = ruleViolations({ ...item, pdfText: result.text, pdfTextStatus: result.status });
+    const patch = { pdfText: result.text, pdfTextStatus: result.status };
+    const problems = ruleViolations(effectiveDocument(item, patch));
     if (problems.length) throw pdfError(null, "rules-precheck", `les règles Firestore refuseraient toute écriture sur cette fiche : ${problems.join(" ; ")}`);
-    await setDoc(doc(db, "padletItems", item.id), { pdfText: result.text, pdfTextStatus: result.status }, { merge: true });
+    await mergeItem(item.id, patch);
     return result.status;
 }
 let pdfIndexRunning = false;

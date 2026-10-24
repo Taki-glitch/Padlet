@@ -30,3 +30,17 @@ export function ruleViolations(data) {
     if (has(data, "fileSize") && !(typeof data.fileSize === "number" && data.fileSize >= 0 && data.fileSize <= 52428800)) problems.push("« fileSize » hors limites (50 Mio max)");
     return problems;
 }
+
+// Les règles refusent « retentionMonths: null » (ni nombre ni texte) alors que l'ancien formulaire l'enregistrait quand la durée
+// de conservation était vide. Une telle fiche ne pouvait donc plus être modifiée, mise à la corbeille ni indexée. Liste des champs
+// à SUPPRIMER (deleteField) dans l'écriture, qu'ils soient nuls dans l'écriture ou déjà nuls dans la fiche enregistrée.
+export const NULL_FORBIDDEN_FIELDS = ["retentionMonths"];
+export function nullFieldsToDelete(stored = {}, patch = {}) {
+    return NULL_FORBIDDEN_FIELDS.filter((key) => (has(patch, key) ? patch[key] : stored?.[key]) === null);
+}
+// Document tel qu'il serait après l'écriture (pour le pré-contrôle) : champs nuls interdits retirés.
+export function effectiveDocument(stored = {}, patch = {}) {
+    const result = { ...stored, ...patch };
+    for (const key of nullFieldsToDelete(stored, patch)) delete result[key];
+    return result;
+}

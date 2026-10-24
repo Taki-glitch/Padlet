@@ -31,7 +31,9 @@ import { buildCalendarEvents, buildIcs } from "./modules/ics.mjs";
 import { validatePasswordChange } from "./modules/password.mjs";
 import { ruleViolations, nullFieldsToDelete, effectiveDocument } from "./modules/rules-check.mjs";
 import { extractPdfText, buildSnippet, loadFirst, pdfIndexSummary, needsPdfIndexing } from "./modules/pdftext.mjs";
-import { themeCounts, largestFiles, overdueDeadlines } from "./modules/dashboard.mjs";
+import { themeCounts, largestFiles, overdueDeadlines, isDone } from "./modules/dashboard.mjs";
+import { sha256Hex, findDuplicates } from "./modules/duplicates.mjs";
+import { sanitizeSaved, addSaved, removeSaved } from "./modules/savedSearches.mjs";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -317,10 +319,77 @@ async function startFirestoreSession(session) {
             setStatus(`${items.length} élément${items.length > 1 ? "s" : ""} synchronisé${items.length > 1 ? "s" : ""}.`);
             openFromHash();
             updatePdfIndexSummary();
+            renderSavedSearches();
         },
         (error) => { console.error("Écoute Firestore interrompue :", error?.code, error); recoverFirestoreListener(error); });
     await refreshStorageUsage();
 }
+
+
+// --- Échéance terminée / rouverte (administrateur) : champs `done` et `doneAt`, l'échéance reste dans la frise et n'est pas supprimée.
+function updateReadDoneButton() {
+    const button = $("read-done");
+    const visible = Boolean(readModalItem) && readModalItem.type === "deadline" && isAdmin();
+    button.classList.toggle("hidden", !visible);
+    if (visible) button.textContent = isDone(readModalItem) ? `Terminée le ${dateLabel(readModalItem.doneAt || "")} — rouvrir` : "Marquer comme terminée";
+}
+$("read-done").addEventListener("click", async () => {
+    const button = $("read-done");
+    if (!readModalItem || readModalItem.type !== "deadline" || !requireAdmin() || button.disabled) return;
+    const reopening = isDone(readModalItem), id = readModalItem.id;
+    button.disabled = true;
+    try {
+        await refreshAdminFirestoreSession();
+        const doneAt = localDateValue(new Date());
+        await mergeItem(id, reopening ? { done: deleteField(), doneAt: deleteField() } : { done: true, doneAt });
+        readModalItem = reopening ? { ...readModalItem, done: false, doneAt: undefined } : { ...readModalItem, done: true, doneAt };
+        updateReadDoneButton();
+        await logActivity({ action: reopening ? "deadline.reopen" : "deadline.complete", resourceType: "deadline", resourceId: id, label: readModalItem.title });
+        setStatus(reopening ? "Échéance rouverte." : "Échéance marquée comme terminée.");
+    } catch (error) { console.error(error); setStatus("Impossible de modifier l’échéance. Réessayez.", true); }
+    finally { button.disabled = false; }
+});
+
+// --- Recherches enregistrées : stockées dans le navigateur, une liste par utilisateur (comme les favoris).
+function savedSearchesKey() { return currentUser?.id ? `padlet-saved-searches:${currentUser.id}` : ""; }
+function loadSavedSearches() {
+    const key = savedSearchesKey();
+    if (!key) return [];
+    try { return sanitizeSaved(JSON.parse(localStorage.getItem(key) || "[]")); } catch { return []; }
+}
+function persistSavedSearches(list) {
+    const key = savedSearchesKey();
+    if (!key) return false;
+    try { localStorage.setItem(key, JSON.stringify(list)); return true; } catch { return false; }
+}
+function renderSavedSearches(selectedName = $("saved-searches").value) {
+    const select = $("saved-searches"), list = loadSavedSearches();
+    select.replaceChildren(new Option("— Choisir —", ""), ...list.map((entry) => new Option(entry.name, entry.name)));
+    select.value = list.some((entry) => entry.name === selectedName) ? selectedName : "";
+}
+$("saved-searches").addEventListener("change", (event) => {
+    const entry = loadSavedSearches().find((item) => item.name === event.target.value);
+    if (!entry) return;
+    searchInput.value = entry.query; themeFilter.value = entry.theme; tagFilter.value = entry.tag; favoriteFilter.value = entry.favorites; sortControl.value = entry.sort;
+    render();
+    setStatus(`Recherche « ${entry.name} » appliquée.`);
+});
+$("save-search").addEventListener("click", () => {
+    const result = addSaved(loadSavedSearches(), { name: $("saved-search-name").value, query: searchInput.value, theme: themeFilter.value, tag: tagFilter.value, favorites: favoriteFilter.value, sort: sortControl.value });
+    if (result.error) { setStatus(result.error, true); return; }
+    if (!persistSavedSearches(result.list)) { setStatus("Impossible d’enregistrer sur cet appareil (stockage du navigateur indisponible).", true); return; }
+    const name = $("saved-search-name").value.trim();
+    $("saved-search-name").value = "";
+    renderSavedSearches(name);
+    setStatus(`Recherche « ${name} » enregistrée.`);
+});
+$("delete-search").addEventListener("click", () => {
+    const name = $("saved-searches").value;
+    if (!name) { setStatus("Choisissez d’abord une recherche à supprimer.", true); return; }
+    persistSavedSearches(removeSaved(loadSavedSearches(), name));
+    renderSavedSearches("");
+    setStatus(`Recherche « ${name} » supprimée.`);
+});
 
 // --- Lien direct vers une fiche : #fiche=<id>. Seules les fiches actives déjà autorisées par Firestore sont ouvertes
 // (une fiche en corbeille ou inexistante affiche « introuvable ») ; aucun contenu n'est exposé par l'URL elle-même.
@@ -954,7 +1023,7 @@ function renderDashboard() {
         usedMetric,
         dashboardMetric("Espace restant", remaining === null ? "Indisponible" : formatMegabytes(remaining))
     );
-    const deadlines = items.filter((item) => item.type === "deadline" && parseTimelineDate(item))
+    const deadlines = items.filter((item) => item.type === "deadline" && !isDone(item) && parseTimelineDate(item))
         .filter((item) => { const days = daysUntil(timelineDate(item)); return days !== null && days >= 0 && days <= 30; })
         .sort((a, b) => timelineDate(a).localeCompare(timelineDate(b)));
     renderDashboardList($("dashboard-deadlines"), deadlines, "Aucune échéance dans les 30 prochains jours.", (item) => { const days = daysUntil(timelineDate(item)); return `${days === 0 ? "Aujourd’hui" : days === 1 ? "Demain" : `Dans ${days} jours`} · ${dateLabel(timelineDate(item))}`; }, openReadModal);
@@ -963,7 +1032,7 @@ function renderDashboard() {
     renderDashboardList($("dashboard-expirations"), upcoming, "Aucun document n’expire dans les 30 prochains jours.", (item) => `${expirationLabel(item)} · ${dateLabel(expirationDate(item))}`, openReadModal);
     const recent = [...documents].sort((a, b) => String(b.publishedAt || b.date || "").localeCompare(String(a.publishedAt || a.date || ""))).slice(0, 5);
     renderDashboardList($("dashboard-recent"), recent, "Aucun document pour le moment.", (item) => `Document du ${dateLabel(item.date)} · ajouté le ${dateLabel(String(item.publishedAt || item.date || "").slice(0, 10))}`, openReadModal);
-    const overdue = overdueDeadlines(items.filter((item) => item.type === "deadline"), localDateValue(new Date()), timelineDate);
+    const overdue = overdueDeadlines(items.filter((item) => item.type === "deadline" && !isDone(item)), localDateValue(new Date()), timelineDate);
     renderDashboardList($("dashboard-overdue"), overdue, "Aucune échéance dépassée ces 30 derniers jours.", (item) => `En retard de ${item.daysLate} jour${item.daysLate > 1 ? "s" : ""} · ${dateLabel(timelineDate(item))}`, null);
     renderDashboardList($("dashboard-themes"), themeCounts(documents).map((entry) => ({ type: "document", title: entry.title, count: entry.count })), "Aucun document pour le moment.", (entry) => `${entry.count} document${entry.count > 1 ? "s" : ""}`, null);
     renderDashboardList($("dashboard-largest"), largestFiles(documents), "Aucun fichier enregistré.", (item) => formatMegabytes(item.fileSize), openReadModal);
@@ -1342,7 +1411,18 @@ docForm.addEventListener("submit", async (event) => {
     let uploadedFilePath = "";
     try {
         await refreshAdminFirestoreSession();
+        const selectedFile = type === "document" ? $("doc-file").files[0] : null;
+        let fileHash = "";
+        if (selectedFile) {
+            fileHash = await sha256Hex(await selectedFile.arrayBuffer());
+            const duplicates = findDuplicates(items, { sha256: fileHash, fileName: selectedFile.name, fileSize: selectedFile.size }, id);
+            if (duplicates.length) {
+                const lines = duplicates.slice(0, 3).map(({ item: other, certainty }) => `• « ${other.title || other.fileName} » (${certainty === "identique" ? "fichier identique" : "même nom et même taille"})`).join("\n");
+                if (!window.confirm(`Ce fichier ressemble à un document déjà enregistré :\n${lines}\n\nEnregistrer quand même ?`)) { setStatus("Enregistrement annulé : doublon possible."); return; }
+            }
+        }
         const file = type === "document" ? await uploadSelectedFile(id) : { fileUrl: "", filePath: "", fileName: "", fileType: "" };
+        if (selectedFile && fileHash) file.sha256 = fileHash;
         uploadedFilePath = $("doc-file").files[0] ? file.filePath : "";
         const oldFilePath = $("existing-file-path").value;
         const item = type === "document"
@@ -1485,6 +1565,7 @@ function openReadModal(item) {
     const expiryWarning = isAdmin() ? expirationConsistency(item) : "";
     $("read-expiration-warning").textContent = expiryWarning;
     $("read-expiration-warning").classList.toggle("hidden", !expiryWarning);
+    updateReadDoneButton();
     const readFavorite = $("read-favorite");
     readFavorite.classList.toggle("hidden", item.type !== "document");
     updateReadFavoriteButton();

@@ -35,6 +35,7 @@ export function buildCalendarEvents(items) {
     for (const item of items || []) {
         if (!item?.id) continue;
         if (item.type === "deadline") {
+            if (item.done === true) continue;   // échéance terminée : pas exportée
             if (isCivilDate(item.date)) events.push({ uid: `deadline-${item.id}@padlet`, date: item.date, summary: item.title || "Échéance", description: item.description || "" });
             else skipped.push(item.title || item.id);
         } else if (item.type === "document" && item.expiresAt) {

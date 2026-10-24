@@ -286,3 +286,8 @@ button.dashboard-metric:hover, button.dashboard-list-item:hover { background:var
     .timeline-label, .timeline-group-title, .timeline-marker::after { -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     a { color:inherit; text-decoration:none; }
 }
+
+.saved-searches { display:flex; flex-direction:column; gap:.4rem; }
+.saved-searches select, .saved-searches input { width:100%; }
+.saved-searches-actions { display:flex; gap:.4rem; flex-wrap:wrap; }
+.saved-searches small { color:var(--muted); }

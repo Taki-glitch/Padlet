@@ -75,6 +75,13 @@
                         <option value="title-desc">Titre — Z → A</option>
                     </select>
                 </label>
+                <div class="filter-control saved-searches">
+                    <label for="saved-searches">Recherches enregistrées</label>
+                    <select id="saved-searches" aria-label="Recherches enregistrées"><option value="">— Choisir —</option></select>
+                    <input id="saved-search-name" type="text" maxlength="60" placeholder="Nom de la recherche" aria-label="Nom de la recherche à enregistrer">
+                    <div class="saved-searches-actions"><button id="save-search" type="button">Enregistrer la recherche actuelle</button><button id="delete-search" type="button">Supprimer</button></div>
+                    <small>Enregistrées sur cet appareil, pour votre compte.</small>
+                </div>
                     </div>
                 </details>
                 <div class="display-mode" role="group" aria-label="Affichage des documents">
@@ -252,6 +259,7 @@
             <div class="read-heading">
                 <button id="read-favorite" class="favorite-button" type="button" aria-label="Ajouter aux favoris" title="Ajouter aux favoris">☆</button>
                 <button id="read-copy-link" class="link-button" type="button">Copier le lien</button>
+                <button id="read-done" class="link-button hidden" type="button"></button>
                 <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span><span id="read-expiration-wrap" class="hidden"> · <span id="read-expiration"></span></span></div>
                 <p id="read-expiration-warning" class="expiration-warning hidden" role="status"></p>
             </div>

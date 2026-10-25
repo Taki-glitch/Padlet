@@ -32,4 +32,4 @@ export function sharingMigrationPlan(active = [], trashed = []) {
 
 // Interrupteur de déploiement : tant qu'il vaut false, les utilisateurs ordinaires continuent de voir toutes les fiches (comportement
 // d'avant). Passer à true APRÈS la préparation du partage (docs/PARTAGE.md, étape 4) : ils ne demandent alors que les fiches partagées.
-export const SHARING_ENFORCED = false;
+export const SHARING_ENFORCED = true;

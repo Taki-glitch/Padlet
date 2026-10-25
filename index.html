@@ -39,6 +39,8 @@
             <div class="account-menu">
                 <button id="btn-account" class="account-toggle hidden" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="account-panel"><span id="auth-user"></span><span aria-hidden="true">▾</span></button>
                 <div id="account-panel" class="account-panel hidden">
+                    <button id="btn-guide" type="button">Guide d’utilisation</button>
+                    <button id="btn-feedback" type="button">Donner un avis</button>
                     <button id="btn-settings" type="button">Paramètres</button>
                     <button id="btn-admin-users" class="hidden" type="button">Utilisateurs</button>
                     <button id="btn-sign-out" type="button">Se déconnecter</button>
@@ -105,6 +107,13 @@
             <span id="selection-count" aria-live="polite">0 document sélectionné</span>
             <div class="selection-actions">
                 <button id="clear-selection" type="button">Tout désélectionner</button>
+                <span id="bulk-actions" class="bulk-actions hidden">
+                    <button id="bulk-share" type="button">Partager</button>
+                    <button id="bulk-unshare" type="button">Ne plus partager</button>
+                    <input id="bulk-value" type="text" maxlength="120" placeholder="Thème ou tag" aria-label="Thème ou tag à appliquer à la sélection">
+                    <button id="bulk-theme" type="button">Définir le thème</button>
+                    <button id="bulk-tag" type="button">Ajouter le tag</button>
+                </span>
                 <button id="delete-selected" class="delete hidden" type="button">Supprimer la sélection</button>
             </div>
         </section>
@@ -154,6 +163,9 @@
                 <p id="sharing-summary" role="status" aria-live="polite"></p>
                 <div class="form-actions"><button id="sharing-simulate" type="button">Simuler la préparation du partage</button><button id="sharing-apply" type="button" disabled>Appliquer la préparation</button></div>
                 <p id="sharing-status" role="status" aria-live="polite"></p>
+                <h3>Avis reçus</h3>
+                <div class="form-actions"><button id="feedback-load" type="button">Afficher les avis</button></div>
+                <div id="feedback-list" role="region" aria-label="Avis reçus"></div>
                 <h3>Journal d’activité</h3>
                 <p>Événements administratifs conservés 12 mois. Les règles Firestore interdisent toute modification ou suppression depuis l’application.</p>
                 <button id="activity-load" type="button">Afficher les 50 derniers événements</button>
@@ -330,6 +342,32 @@
             </form>
             <p id="admin-users-status" class="app-status" role="status"></p>
             <div id="admin-users-list" class="admin-users-list" aria-live="polite"></div>
+        </div>
+    </div>
+
+    <div id="guide-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+        <div class="modal-content">
+            <button class="close-btn" id="close-guide" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="guide-title">Bien démarrer</h2>
+            <ol id="guide-steps" class="guide-steps"></ol>
+            <p class="settings-note">Ce guide est toujours disponible dans le menu du compte → « Guide d’utilisation ».</p>
+            <div class="form-actions"><button id="guide-ok" type="button" class="btn-primary">Compris</button></div>
+        </div>
+    </div>
+
+    <div id="feedback-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="feedback-title">
+        <div class="modal-content">
+            <button class="close-btn" id="close-feedback" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="feedback-title">Donner un avis</h2>
+            <form id="feedback-form" autocomplete="off">
+                <label>Type <select id="feedback-type"><option value="bug">Bug</option><option value="suggestion">Suggestion</option><option value="utilisation">Problème d’utilisation</option><option value="autre">Autre</option></select></label>
+                <label>Description <textarea id="feedback-message" rows="4" maxlength="2000" required></textarea></label>
+                <label>Étapes pour reproduire (facultatif) <textarea id="feedback-steps" rows="3" maxlength="1000"></textarea></label>
+                <label>Page concernée (facultatif) <input id="feedback-page" type="text" maxlength="60"></label>
+                <p class="settings-note">Envoyé à l’administrateur avec votre identifiant de compte et la version de l’application. N’y mettez ni mot de passe ni information confidentielle.</p>
+                <p id="feedback-status" class="app-status" role="status" aria-live="polite"></p>
+                <div class="form-actions"><button id="cancel-feedback" type="button">Annuler</button><button id="feedback-submit" type="submit" class="btn-primary">Envoyer</button></div>
+            </form>
         </div>
     </div>
 

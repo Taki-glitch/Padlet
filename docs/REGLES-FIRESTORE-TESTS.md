@@ -34,3 +34,11 @@ Les écritures de la fonction `admin-users` dans `activityLog` passent par le co
 | 21 | `padletItems/x` | create `{shared: "oui"}` | admin | refusé (le champ doit être un booléen) |
 
 Le simulateur teste des lectures de documents ; la liste filtrée (`where shared == true`) est contrôlée en vrai avec un compte ordinaire à l'étape 4.
+
+## Cas pour la collection `feedback` (règles `firestore.rules.partage`)
+| # | Chemin | Opération | Acteur | Attendu |
+|---|---|---|---|---|
+| 22 | `feedback/a` | create `{type:"bug", message:<20 caractères>, userId:<son uid>, at:<heure serveur>}` | user | autorisé |
+| 23 | `feedback/a` | create avec le `userId` d'un autre compte | user | refusé |
+| 24 | `feedback/a` | get | user | refusé |
+| 25 | `feedback/a` | get et delete | admin | autorisé |

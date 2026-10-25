@@ -41,6 +41,15 @@
 - [ ] Après `SHARING_ENFORCED = true` : compte ordinaire = seulement les fiches partagées ; lien direct `#fiche=` d'une fiche non partagée → « introuvable »
 - [ ] Après publication des règles « partage » : compte ordinaire et administrateur fonctionnent encore
 
+## 0.10.0
+- [ ] « Sélectionner » : cocher 3 documents → boutons Partager / Ne plus partager / thème / tag visibles ; chaque action demande confirmation et affiche un bilan
+- [ ] Définir le thème sur une sélection : le thème apparaît dans les filtres ; ajouter un tag déjà présent → « déjà à jour »
+- [ ] Compte ordinaire : pas de bouton « Sélectionner » ni d'actions groupées
+- [ ] Première connexion avec la 0.10.0 : le guide s'ouvre une fois ; « Guide d'utilisation » (menu du compte) le rouvre ; Échap le ferme ; un utilisateur ordinaire ne voit pas les étapes administrateur
+- [ ] Menu du compte → « Donner un avis » : message trop court refusé ; envoi réussi seulement si les règles à jour sont publiées, sinon message « pas encore activé »
+- [ ] Administrateur : Paramètres → « Afficher les avis » liste l'avis envoyé
+- [ ] Touche Tab : un contour visible suit le focus sur les boutons et les champs
+
 ## Appareils réels (à cocher seulement si testés sur l'appareil, pas en émulation)
 - [ ] iPhone / Safari : connexion, recherche, aperçu PDF, téléchargement, frise (zoom au doigt), modales (clavier à l'écran)
 - [ ] iPad / Safari : mêmes tests, orientation portrait et paysage

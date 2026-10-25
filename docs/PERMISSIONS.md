@@ -2,8 +2,8 @@
 
 | Action | Visiteur | Utilisateur | Administrateur | Appliqué par |
 |---|---|---|---|---|
-| Lire les fiches actives | non | oui | oui | règles Firestore |
-| Lire les fiches en corbeille | non | **oui (limite connue)**, masquées à l'écran | oui | règles Firestore (voir PLAN-CORBEILLE.md) |
+| Lire les fiches **partagées** | non | oui | oui | règles actuelles : toutes les fiches ; règles « partage » (docs/PARTAGE.md) : `shared == true` |
+| Lire les fiches non partagées et la corbeille | non | **oui tant que les règles « partage » ne sont pas publiées** | oui | règles Firestore (docs/PARTAGE.md, étape 6) |
 | Créer / modifier / supprimer une fiche | non | non | oui | règles Firestore (jeton `role`) |
 | Mettre à la corbeille, restaurer | non | non | oui | règles Firestore |
 | Envoyer / supprimer un fichier | non | non | oui | politiques Storage |

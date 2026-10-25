@@ -33,6 +33,14 @@
 - [ ] Échéance (admin) : fiche → « Marquer comme terminée » ; elle disparaît du tableau de bord et de l'export .ics ; « rouvrir » la remet
 - [ ] Un utilisateur ordinaire ne voit pas le bouton « Marquer comme terminée »
 
+## 0.9.0 (partage) — suivre docs/PARTAGE.md
+- [ ] Paramètres → Partage : « Simuler » affiche des chiffres et n'écrit rien ; « Appliquer » puis « À préparer : 0 »
+- [ ] Nouvelle fiche : case « Visible par les utilisateurs » décochée ; ancienne fiche : cochée à l'ouverture
+- [ ] Fiche décochée : pastille « Non partagé » (administrateur)
+- [ ] Mise à la corbeille puis restauration : l'état de partage est retrouvé
+- [ ] Après `SHARING_ENFORCED = true` : compte ordinaire = seulement les fiches partagées ; lien direct `#fiche=` d'une fiche non partagée → « introuvable »
+- [ ] Après publication des règles « partage » : compte ordinaire et administrateur fonctionnent encore
+
 ## Appareils réels (à cocher seulement si testés sur l'appareil, pas en émulation)
 - [ ] iPhone / Safari : connexion, recherche, aperçu PDF, téléchargement, frise (zoom au doigt), modales (clavier à l'écran)
 - [ ] iPad / Safari : mêmes tests, orientation portrait et paysage

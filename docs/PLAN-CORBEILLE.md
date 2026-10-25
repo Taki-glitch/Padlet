@@ -1,6 +1,6 @@
 # Plan : empêcher les utilisateurs ordinaires de recevoir les fiches en corbeille
 
-**Statut : plan seul, rien n'est codé. À valider avant toute migration.**
+**Statut : remplacé par `docs/PARTAGE.md` (0.9.0).** Le partage par document règle aussi la corbeille : une fiche supprimée devient non partagée et n'est plus envoyée aux utilisateurs. Ce plan est conservé pour mémoire.
 
 ## Constat (vérifié dans le code et les règles)
 Les règles autorisent `read` de `padletItems` à tout utilisateur connecté. Le navigateur reçoit donc **toutes** les fiches, y compris celles qui ont un champ `deletedAt`, puis `splitTrash()` les écarte à l'écran. Un utilisateur ordinaire averti pourrait les lire avec les outils de son navigateur.

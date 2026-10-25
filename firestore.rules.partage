@@ -1,5 +1,5 @@
 // VERSION CIBLE « PARTAGE PAR DOCUMENT » — NE PAS PUBLIER avant l'étape 5 de docs/PARTAGE.md.
-// Identique à firestore.rules sauf : lecture de padletItems limitée aux fiches `shared == true` (hors administrateurs) et champ `shared` booléen.
+// Identique à firestore.rules sauf : lecture de padletItems limitée aux fiches `shared == true` (hors administrateurs), champ `shared` booléen, et collection `feedback` (avis).
 rules_version = '2';
 
 service cloud.firestore {
@@ -51,6 +51,24 @@ service cloud.firestore {
         && request.resource.data.expireAt > request.time
         && request.resource.data.expireAt < request.time + duration.value(400, 'd');
       allow update, delete: if false;
+    }
+
+    // Avis des utilisateurs : tout compte connecté peut en envoyer (à son nom, heure du serveur, tailles limitées) ;
+    // seuls les administrateurs les lisent ou les suppriment ; jamais modifiables.
+    match /feedback/{feedbackId} {
+      allow read, delete: if request.auth != null && request.auth.token.role == 'admin';
+      allow create: if request.auth != null
+        && request.resource.data.keys().hasOnly(['type', 'message', 'steps', 'page', 'appVersion', 'userId', 'at'])
+        && request.resource.data.keys().hasAll(['type', 'message', 'userId', 'at'])
+        && request.resource.data.userId == request.auth.uid
+        && request.resource.data.at == request.time
+        && request.resource.data.type in ['bug', 'suggestion', 'utilisation', 'autre']
+        && request.resource.data.message is string
+        && request.resource.data.message.size() >= 10 && request.resource.data.message.size() <= 2000
+        && (!('steps' in request.resource.data) || (request.resource.data.steps is string && request.resource.data.steps.size() <= 1000))
+        && (!('page' in request.resource.data) || (request.resource.data.page is string && request.resource.data.page.size() <= 60))
+        && (!('appVersion' in request.resource.data) || (request.resource.data.appVersion is string && request.resource.data.appVersion.size() <= 20));
+      allow update: if false;
     }
 
     // État de la dernière purge, écrit uniquement par la fonction serveur (compte de service).

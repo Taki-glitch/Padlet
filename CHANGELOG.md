@@ -2,6 +2,25 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.10.0 — Actions groupées, guide, avis, accessibilité
+
+### Nouveautés (modules testés ; interface **non vérifiée dans un navigateur**)
+- **Actions groupées** (administrateur, mode « Sélectionner ») : Partager, Ne plus partager, Définir le thème, Ajouter le tag. Confirmation avant écriture, bilan « n modifiés · n déjà à jour · échecs listés », journalisé (`document.bulk-update`).
+- **Guide d'utilisation** : s'ouvre une fois par compte à la première connexion avec cette version, relançable depuis le menu du compte ; le contenu dépend du rôle.
+- **Donner un avis** (menu du compte) : type, description, étapes, page ; enregistré dans la collection Firestore `feedback` avec l'identifiant du compte et la version ; lisible dans Paramètres → « Avis reçus » (administrateur). **Le succès n'est annoncé qu'après confirmation de Firestore.** Nécessite la publication des règles à jour (`firestore.rules.partage`, bloc `feedback`).
+- **Accessibilité** : contour de focus visible, respect de « réduire les animations ».
+
+### Documentation
+- `docs/PLAN-MODELE-DONNEES.md` (collections, pièces jointes, versions, récurrences : plan à valider), cas 22 à 25 dans `docs/REGLES-FIRESTORE-TESTS.md`.
+- 71 tests.
+
+### À savoir
+- Si `firestore.rules.partage` est déjà publiée : la republier (elle contient maintenant `feedback`), sinon l'envoi d'un avis affiche « pas encore activé ».
+
+## 0.9.1 — Message d'erreur réel pour la gestion des comptes
+
+- Gestion des utilisateurs : l'échec d'une suppression ou d'un changement de rôle affiche maintenant la **cause renvoyée par le serveur** au lieu d'un texte générique (diagnostic de la suppression d'un compte administrateur impossible).
+
 ## 0.9.0 — Partage document par document
 
 ### Nouveautés (modules et règles testés ; interface **non vérifiée dans un navigateur**)

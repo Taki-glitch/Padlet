@@ -34,6 +34,9 @@ import { extractPdfText, buildSnippet, loadFirst, pdfIndexSummary, needsPdfIndex
 import { themeCounts, largestFiles, overdueDeadlines, isDone } from "./modules/dashboard.mjs";
 import { sha256Hex, findDuplicates } from "./modules/duplicates.mjs";
 import { sanitizeSaved, addSaved, removeSaved } from "./modules/savedSearches.mjs";
+import { cleanBulkText, addTag, bulkSummary } from "./modules/bulk.mjs";
+import { FEEDBACK_TYPES, validateFeedback } from "./modules/feedback.mjs";
+import { guideSteps, guideSeenKey } from "./modules/guide.mjs";
 import { effectivelyShared, trashChanges, restoreChanges, sharingMigrationPlan, SHARING_ENFORCED } from "./modules/sharing.mjs";
 
 const app = initializeApp(firebaseConfig);
@@ -324,6 +327,7 @@ async function startFirestoreSession(session) {
             updatePdfIndexSummary();
             renderSavedSearches();
             updateSharingSummary();
+            maybeShowGuide();
         },
         (error) => { console.error("Écoute Firestore interrompue :", error?.code, error); recoverFirestoreListener(error); });
     await refreshStorageUsage();
@@ -430,6 +434,116 @@ $("sharing-apply").addEventListener("click", async () => {
         status.textContent = failures.length ? `Arrêté : ${done} fiche(s) préparée(s), ${failures.length} échec(s). Relancez la simulation puis réessayez.` : `Terminé : ${done} fiche(s) préparée(s).`;
     } catch (error) { console.error(error); status.textContent = `Préparation interrompue : ${error.message || "erreur inconnue"}`; }
     finally { button.disabled = Boolean(failures.length === 0); }
+});
+
+
+// --- Actions groupées (administrateur) : partager, thème, tag sur la sélection. Bilan détaillé, échecs listés, rien de silencieux.
+async function bulkUpdateSelected(description, patchFor) {
+    if (!requireAdmin()) return;
+    const selected = [...new Map(documentItems().filter((item) => selectedDocumentIds.has(item.id)).map((item) => [item.id, item])).values()];
+    if (!selected.length) { setStatus("Aucun document sélectionné.", true); return; }
+    if (!window.confirm(`${description} pour ${selected.length} document${selected.length > 1 ? "s" : ""} sélectionné${selected.length > 1 ? "s" : ""} ?`)) return;
+    const buttons = ["bulk-share", "bulk-unshare", "bulk-theme", "bulk-tag"].map((id) => $(id));
+    buttons.forEach((button) => { button.disabled = true; });
+    let done = 0, unchanged = 0; const failures = [];
+    try {
+        await refreshAdminFirestoreSession();
+        for (const item of selected) {
+            const patch = patchFor(item);
+            if (!patch) { unchanged += 1; continue; }
+            try { await mergeItem(item.id, patch); done += 1; }
+            catch (error) { console.error("Action groupée impossible pour", item.id, error?.code, error); failures.push(item.title || item.id); }
+        }
+        await logActivity({ action: "document.bulk-update", resourceType: "document", count: done, label: description });
+        setStatus(`${description} : ${bulkSummary({ done, unchanged, failures })}`, failures.length > 0);
+    } catch (error) { console.error(error); setStatus("Action groupée interrompue. Réessayez.", true); }
+    finally { buttons.forEach((button) => { button.disabled = false; }); }
+}
+$("bulk-share").addEventListener("click", () => bulkUpdateSelected("Partager", (item) => (item.shared === true ? null : { shared: true })));
+$("bulk-unshare").addEventListener("click", () => bulkUpdateSelected("Ne plus partager", (item) => (item.shared === false ? null : { shared: false })));
+$("bulk-theme").addEventListener("click", () => {
+    const value = cleanBulkText($("bulk-value").value, 120);
+    if (!value) { setStatus("Saisissez le thème à appliquer.", true); return; }
+    const theme = canonicalTheme(value);
+    bulkUpdateSelected(`Définir le thème « ${theme} »`, (item) => (item.theme === theme ? null : { theme }));
+});
+$("bulk-tag").addEventListener("click", () => {
+    const value = cleanBulkText($("bulk-value").value, 60);
+    if (!value) { setStatus("Saisissez le tag à ajouter.", true); return; }
+    bulkUpdateSelected(`Ajouter le tag « ${value} »`, (item) => { const result = addTag(item.tags, value); return result.changed ? { tags: result.tags } : null; });
+});
+
+// --- Guide de première utilisation : s'affiche une seule fois par compte, relançable depuis le menu du compte.
+function openGuide() {
+    const list = $("guide-steps");
+    list.replaceChildren(...guideSteps(isAdmin() ? "admin" : "user").map(([title, text]) => { const li = document.createElement("li"), strong = document.createElement("strong"); strong.textContent = title; li.append(strong, text); return li; }));
+    $("guide-modal").classList.remove("hidden"); $("guide-ok").focus();
+}
+function closeGuide() { $("guide-modal").classList.add("hidden"); }
+let guideChecked = false;
+function maybeShowGuide() {
+    if (guideChecked || !currentUser || !currentProfile) return;
+    guideChecked = true;
+    const key = guideSeenKey(currentUser.id);
+    try { if (localStorage.getItem(key)) return; localStorage.setItem(key, "1"); } catch { return; }
+    openGuide();
+}
+$("btn-guide").addEventListener("click", () => { setAccountMenu(false); openGuide(); });
+$("close-guide").addEventListener("click", closeGuide);
+$("guide-ok").addEventListener("click", closeGuide);
+
+// --- Donner un avis : enregistré dans la collection Firestore « feedback » (lisible seulement par les administrateurs).
+// Le succès n'est annoncé qu'après la confirmation de Firestore ; sans règle publiée, l'envoi échoue et le dit.
+let lastFeedbackAt = 0;
+function setFeedbackStatus(message, isError = false) { const el = $("feedback-status"); el.textContent = message; el.classList.toggle("error", isError); }
+function closeFeedback() { $("feedback-form").reset(); setFeedbackStatus(""); $("feedback-modal").classList.add("hidden"); }
+$("btn-feedback").addEventListener("click", () => {
+    if (!currentUser) return;
+    setAccountMenu(false); setFeedbackStatus("");
+    $("feedback-page").value = btnTimeline.classList.contains("active") ? "Frise" : btnDashboard.classList.contains("active") ? "Tableau de bord" : "Documents";
+    $("feedback-modal").classList.remove("hidden"); $("feedback-message").focus();
+});
+$("close-feedback").addEventListener("click", closeFeedback);
+$("cancel-feedback").addEventListener("click", closeFeedback);
+$("feedback-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const submit = $("feedback-submit");
+    if (submit.disabled || !currentUser) return;
+    const result = validateFeedback({ type: $("feedback-type").value, message: $("feedback-message").value, steps: $("feedback-steps").value, page: $("feedback-page").value });
+    if (result.error) { setFeedbackStatus(result.error, true); return; }
+    if (Date.now() - lastFeedbackAt < 30000) { setFeedbackStatus("Patientez quelques secondes avant d’envoyer un autre avis.", true); return; }
+    submit.disabled = true; submit.textContent = "Envoi…"; setFeedbackStatus("");
+    try {
+        await addDoc(collection(db, "feedback"), { ...result.data, appVersion: APP_VERSION, userId: currentUser.id, at: serverTimestamp() });
+        lastFeedbackAt = Date.now();
+        closeFeedback();
+        setStatus("Merci, votre avis a bien été enregistré.");
+    } catch (error) {
+        console.error("Envoi de l'avis impossible", error?.code, error);
+        setFeedbackStatus(error?.code === "permission-denied" ? "L’envoi n’est pas encore activé (l’administrateur doit publier les règles Firestore à jour). Votre avis n’a pas été envoyé." : "L’avis n’a pas pu être envoyé. Réessayez plus tard.", true);
+    } finally { submit.disabled = false; submit.textContent = "Envoyer"; }
+});
+$("feedback-load").addEventListener("click", async () => {
+    if (!requireAdmin()) return;
+    const list = $("feedback-list"), button = $("feedback-load");
+    button.disabled = true; list.textContent = "Chargement…";
+    try {
+        await refreshAdminFirestoreSession();
+        const snapshot = await getDocs(query(collection(db, "feedback"), orderBy("at", "desc"), limit(50)));
+        if (snapshot.empty) { list.textContent = "Aucun avis reçu."; return; }
+        list.replaceChildren(...snapshot.docs.map((entry) => {
+            const data = entry.data(), div = document.createElement("div");
+            div.className = "feedback-entry";
+            div.textContent = `${FEEDBACK_TYPES[data.type] || data.type} · ${data.at?.toDate ? data.at.toDate().toLocaleString("fr-FR") : ""} · v${data.appVersion || "?"} · ${data.page || "—"} · compte ${String(data.userId || "").slice(0, 8)}\n${data.message || ""}${data.steps ? `\nÉtapes : ${data.steps}` : ""}`;
+            return div;
+        }));
+    } catch (error) { console.error(error); list.textContent = "Impossible de lire les avis (règles Firestore à publier ?)."; }
+    finally { button.disabled = false; }
+});
+document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!$("guide-modal").classList.contains("hidden")) closeGuide();
+    if (!$("feedback-modal").classList.contains("hidden")) closeFeedback();
 });
 
 // --- Lien direct vers une fiche : #fiche=<id>. Seules les fiches actives déjà autorisées par Firestore sont ouvertes
@@ -851,6 +965,7 @@ function updateSelectionToolbar() {
     selectModeButton.textContent = selectionMode ? "Annuler la sélection" : "Sélectionner";
     selectionCount.textContent = `${selectedCount} document${selectedCount === 1 ? "" : "s"} sélectionné${selectedCount === 1 ? "" : "s"}${hiddenSelectedCount ? ` (${hiddenSelectedCount} hors filtres)` : ""}`;
     deleteSelectedButton.classList.toggle("hidden", !isAdmin() || selectedCount === 0);
+    $("bulk-actions").classList.toggle("hidden", !isAdmin() || selectedCount === 0);
 }
 
 function setSelectionMode(enabled) {
@@ -1688,7 +1803,12 @@ async function callAdminUsers(action, payload = {}) {
     if (sessionError || !session || session.user.id !== currentUser?.id) throw new Error("Session Supabase invalide. Reconnectez-vous.");
     const { data, error } = await supabase.functions.invoke("admin-users", { body: { action, ...payload }, headers: { Authorization: `Bearer ${session.access_token}` } });
     if (action !== "list") await logActivity({ action: `user.${action}`, resourceType: "user", resourceId: typeof payload.id === "string" ? payload.id : "", result: error || data?.error ? "failure" : "success" });
-    if (error) throw error;
+    if (error) {
+        // Le serveur répond 400 avec { error: "…" } : on lit ce message au lieu du texte générique de la bibliothèque.
+        let detail = "";
+        try { detail = (await error.context?.json?.())?.error || ""; } catch { /* corps illisible : message générique */ }
+        throw new Error(detail || error.message || "Erreur du serveur.");
+    }
     if (data?.error) throw new Error(data.error);
     return data;
 }
@@ -1718,7 +1838,7 @@ async function renderAdminUsers() {
                     setAdminUsersStatus(`Rôle de ${user.username} mis à jour.`);
                     if (user.id === currentUser?.id) await signOutCurrentUser("Votre rôle a changé. Reconnectez-vous pour obtenir les nouvelles permissions.");
                     else await renderAdminUsers();
-                } catch (error) { console.error(error); setAdminUsersStatus("Impossible de modifier le rôle.", true); }
+                } catch (error) { console.error(error); setAdminUsersStatus(`Impossible de modifier le rôle : ${error?.message || "erreur inconnue"}`, true); }
             });
             const reset = document.createElement("button"); reset.type = "button"; reset.textContent = "Mot de passe";
             reset.addEventListener("click", async () => {
@@ -1731,7 +1851,7 @@ async function renderAdminUsers() {
             remove.addEventListener("click", async () => {
                 if (!window.confirm(`Supprimer définitivement l’utilisateur « ${user.username} » ?`)) return;
                 try { await callAdminUsers("delete", { id: user.id }); setAdminUsersStatus(`Utilisateur ${user.username} supprimé.`); await renderAdminUsers(); }
-                catch (error) { console.error(error); setAdminUsersStatus("Impossible de supprimer l’utilisateur.", true); }
+                catch (error) { console.error(error); setAdminUsersStatus(`Impossible de supprimer l’utilisateur : ${error?.message || "erreur inconnue"}`, true); }
             });
             row.append(username, role, save, reset, remove); list.append(row);
         });

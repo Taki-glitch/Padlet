@@ -263,8 +263,49 @@ test("règles « partage » : identiques aux règles actuelles sauf la lecture l
   const target = readFileSync(new URL("../firestore.rules.partage", import.meta.url), "utf8");
   assert.match(target, /request\.auth\.token\.role == 'admin' \|\| resource\.data\.shared == true/);
   assert.match(target, /data\.shared is bool/);
-  const reverted = target.split("\n").slice(2).join("\n")
+  let reverted = target.split("\n").slice(2).join("\n")
     .replace("      // PARTAGE : un utilisateur ordinaire ne lit que les fiches `shared == true` (l'application filtre avec where('shared','==',true)).\n      allow read: if request.auth != null\n        && (request.auth.token.role == 'admin' || resource.data.shared == true);", "      allow read: if request.auth != null;")
     .replace("<= 52428800))\n        && (!('shared' in data) || data.shared is bool);", "<= 52428800));");
+  const feedbackStart = reverted.indexOf("\n    // Avis des utilisateurs");
+  const feedbackEnd = reverted.indexOf("\n    // État de la dernière purge");
+  assert.ok(feedbackStart > 0 && feedbackEnd > feedbackStart, "bloc feedback introuvable");
+  reverted = reverted.slice(0, feedbackStart) + reverted.slice(feedbackEnd);
   assert.equal(reverted, current, "les deux fichiers de règles ont divergé en dehors du partage");
+});
+
+import { cleanBulkText, addTag, bulkSummary } from "../modules/bulk.mjs";
+import { validateFeedback, FEEDBACK_TYPES } from "../modules/feedback.mjs";
+import { guideSteps, guideSeenKey } from "../modules/guide.mjs";
+
+test("actions groupées : tags sans doublon, texte nettoyé, bilan lisible", () => {
+  assert.equal(cleanBulkText("  Santé \n  publique  ", 120), "Santé publique");
+  assert.equal(cleanBulkText("x".repeat(200), 60).length, 60);
+  assert.deepEqual(addTag("santé, 2025", "Urgent"), { tags: "santé, 2025, Urgent", changed: true });
+  assert.deepEqual(addTag("Santé, 2025", "SANTE"), { tags: "Santé, 2025", changed: false }, "doublon (casse et accents ignorés)");
+  assert.deepEqual(addTag("", "un,deux"), { tags: "un deux", changed: true }, "la virgule ne crée pas deux tags par erreur");
+  assert.match(addTag("a", "  ").error, /tag/);
+  assert.match(addTag(Array.from({ length: 50 }, (_, i) => `t${i}`).join(", "), "de trop").error, /50/);
+  assert.equal(bulkSummary({ done: 3, unchanged: 1, failures: [] }), "3 modifiés · 1 déjà à jour.");
+  assert.match(bulkSummary({ done: 1, unchanged: 0, failures: ["A", "B"] }), /1 modifié · 2 échecs \(« A », « B »\)/);
+});
+
+test("avis : validation et limites identiques aux règles", () => {
+  assert.match(validateFeedback({ type: "x", message: "un message assez long" }).error, /type/);
+  assert.match(validateFeedback({ type: "bug", message: "court" }).error, /au moins 10/);
+  assert.match(validateFeedback({ type: "bug", message: "a".repeat(2001) }).error, /trop long/);
+  assert.match(validateFeedback({ type: "bug", message: "a".repeat(20), steps: "b".repeat(1001) }).error, /Étapes/);
+  assert.deepEqual(validateFeedback({ type: "suggestion", message: "  Ajouter un mode sombre  ", steps: " ", page: "Frise" }).data, { type: "suggestion", message: "Ajouter un mode sombre", page: "Frise" });
+  assert.deepEqual(Object.keys(FEEDBACK_TYPES), ["bug", "suggestion", "utilisation", "autre"]);
+  const rules = readFileSync(new URL("../firestore.rules.partage", import.meta.url), "utf8");
+  for (const type of Object.keys(FEEDBACK_TYPES)) assert.ok(rules.includes(`'${type}'`), `type ${type} absent des règles`);
+  assert.match(rules, /message\.size\(\) >= 10 && request\.resource\.data\.message\.size\(\) <= 2000/);
+});
+
+test("guide : contenu selon le rôle, une clé par compte", () => {
+  const user = guideSteps("user").map(([title]) => title), admin = guideSteps("admin").map(([title]) => title);
+  assert.ok(admin.length > user.length);
+  assert.ok(!user.some((title) => /Ajouter un document|Actions groupées/.test(title)), "fonctions admin non décrites aux utilisateurs");
+  assert.ok(admin.some((title) => /partager/.test(title)));
+  assert.equal(guideSeenKey("u1"), "padlet-guide-seen:u1");
+  assert.equal(guideSeenKey(""), "");
 });

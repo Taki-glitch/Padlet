@@ -2,6 +2,22 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.9.0 — Partage document par document
+
+### Nouveautés (modules et règles testés ; interface **non vérifiée dans un navigateur**)
+- Case « Visible par les utilisateurs » dans le formulaire (nouvelles fiches : non partagées par défaut ; anciennes : état actuel conservé). Pastille « Non partagé » pour les administrateurs.
+- Paramètres → « Partage avec les utilisateurs » : résumé, **simulation** puis **préparation** des anciennes fiches (écrit `shared` partout sans changer ce que les utilisateurs voient ; idempotent ; reprise possible).
+- La corbeille rend la fiche non partagée et la restauration rétablit l'ancien état : les fiches supprimées ne seront plus envoyées aux utilisateurs.
+- Écoute Firestore des utilisateurs ordinaires filtrée sur `shared == true`, **désactivée par défaut** (`SHARING_ENFORCED = false` dans `modules/sharing.mjs`) pour éviter une liste vide avant la préparation.
+- `firestore.rules.partage` : règles cibles, **à ne pas publier avant les étapes 2 et 4 de `docs/PARTAGE.md`**. `firestore.rules` (règles actuelles) est inchangé.
+
+### Documentation
+- `docs/PARTAGE.md` (mise en place pas à pas et retour arrière), cas 17 à 21 dans `docs/REGLES-FIRESTORE-TESTS.md`, `docs/PERMISSIONS.md` mis à jour.
+- 68 tests.
+
+### Limites
+- Fichiers toujours accessibles par lien direct (bucket public, décision du propriétaire) ; partage « tout le monde ou personne ».
+
 ## 0.8.0 — Doublons, recherches enregistrées, échéances terminées, contrôle des secrets
 
 ### Nouveautés (modules testés ; affichage **non vérifié dans un navigateur**)

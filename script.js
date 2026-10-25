@@ -9,7 +9,7 @@ const firebaseConfig = {
 };
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
-import { getFirestore, collection, doc, setDoc, deleteDoc, deleteField, onSnapshot, addDoc, getDoc, getDocs, query, orderBy, limit, serverTimestamp, Timestamp } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+import { getFirestore, collection, doc, setDoc, deleteDoc, deleteField, onSnapshot, addDoc, getDoc, getDocs, query, orderBy, limit, serverTimestamp, Timestamp, where } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
 import { getAuth, getIdTokenResult, signInWithCustomToken, signOut as firebaseSignOut } from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/+esm";
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from "./supabase-config.js";
@@ -34,6 +34,7 @@ import { extractPdfText, buildSnippet, loadFirst, pdfIndexSummary, needsPdfIndex
 import { themeCounts, largestFiles, overdueDeadlines, isDone } from "./modules/dashboard.mjs";
 import { sha256Hex, findDuplicates } from "./modules/duplicates.mjs";
 import { sanitizeSaved, addSaved, removeSaved } from "./modules/savedSearches.mjs";
+import { effectivelyShared, trashChanges, restoreChanges, sharingMigrationPlan, SHARING_ENFORCED } from "./modules/sharing.mjs";
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
@@ -310,7 +311,9 @@ async function startFirestoreSession(session) {
     }
     firebaseSessionUserId = credential.user.uid;
     firebaseSessionRole = token.claims.role;
-    unsubscribeItems = onSnapshot(itemsCollection,
+    // Administrateur : toutes les fiches. Utilisateur ordinaire : seulement les fiches partagées (les règles « partage » l'exigent aussi, voir docs/PARTAGE.md).
+    const itemsSource = firebaseSessionRole === "admin" || !SHARING_ENFORCED ? itemsCollection : query(itemsCollection, where("shared", "==", true));
+    unsubscribeItems = onSnapshot(itemsSource,
         (snapshot) => {
             ({ active: items, trashed: trashItems } = splitTrash(snapshot.docs.map((item) => item.data())));
             const availableIds = new Set(documentItems().map((item) => item.id));
@@ -320,6 +323,7 @@ async function startFirestoreSession(session) {
             openFromHash();
             updatePdfIndexSummary();
             renderSavedSearches();
+            updateSharingSummary();
         },
         (error) => { console.error("Écoute Firestore interrompue :", error?.code, error); recoverFirestoreListener(error); });
     await refreshStorageUsage();
@@ -389,6 +393,43 @@ $("delete-search").addEventListener("click", () => {
     persistSavedSearches(removeSaved(loadSavedSearches(), name));
     renderSavedSearches("");
     setStatus(`Recherche « ${name} » supprimée.`);
+});
+
+
+// --- Partage avec les utilisateurs (administrateur) : résumé et « préparation » des anciennes fiches (voir docs/PARTAGE.md).
+function updateSharingSummary() {
+    const el = $("sharing-summary");
+    if (!isAdmin()) { el.textContent = ""; return; }
+    const plan = sharingMigrationPlan(items, trashItems);
+    const { alreadyShared, alreadyPrivate } = plan.counts;
+    el.textContent = `Partagées : ${alreadyShared} · Non partagées : ${alreadyPrivate} · À préparer : ${plan.writes.length}. Filtre côté utilisateurs : ${SHARING_ENFORCED ? "actif" : "pas encore activé"}.`;
+}
+$("sharing-simulate").addEventListener("click", () => {
+    if (!requireAdmin()) return;
+    const { writes, counts } = sharingMigrationPlan(items, trashItems);
+    $("sharing-status").textContent = writes.length
+        ? `Simulation (rien n’est écrit) : ${counts.share} fiche(s) active(s) deviendront « partagées » (comme aujourd’hui), ${counts.hideTrash} fiche(s) en corbeille deviendront non partagées.`
+        : "Rien à préparer : toutes les fiches ont déjà un état de partage.";
+    $("sharing-apply").disabled = !writes.length;
+});
+$("sharing-apply").addEventListener("click", async () => {
+    if (!requireAdmin()) return;
+    const button = $("sharing-apply"), status = $("sharing-status"), { writes } = sharingMigrationPlan(items, trashItems);
+    if (!writes.length) { status.textContent = "Rien à préparer."; button.disabled = true; return; }
+    if (!window.confirm(`Préparer le partage de ${writes.length} fiche(s) ?\nLes fiches actives restent visibles par tous (comme aujourd’hui) ; ensuite vous pourrez en rendre certaines non partagées. Aucune fiche n’est supprimée.`)) return;
+    button.disabled = true;
+    let done = 0; const failures = [];
+    try {
+        await refreshAdminFirestoreSession();
+        for (const [index, write] of writes.entries()) {
+            status.textContent = `Préparation ${index + 1}/${writes.length}…`;
+            try { await mergeItem(write.id, write.patch); done += 1; }
+            catch (error) { console.error("Préparation du partage impossible pour", write.id, error?.code, error); failures.push(write.id); if (failures.length >= 3) break; }
+        }
+        await logActivity({ action: "sharing.prepare", resourceType: "document", count: done });
+        status.textContent = failures.length ? `Arrêté : ${done} fiche(s) préparée(s), ${failures.length} échec(s). Relancez la simulation puis réessayez.` : `Terminé : ${done} fiche(s) préparée(s).`;
+    } catch (error) { console.error(error); status.textContent = `Préparation interrompue : ${error.message || "erreur inconnue"}`; }
+    finally { button.disabled = Boolean(failures.length === 0); }
 });
 
 // --- Lien direct vers une fiche : #fiche=<id>. Seules les fiches actives déjà autorisées par Firestore sont ouvertes
@@ -1074,6 +1115,7 @@ function createDocumentCard(item) {
     card.tabIndex = 0;
     const header = document.createElement("div"); header.className = "doc-card-header";
     const title = document.createElement("h4"); title.textContent = item.title || "Sans titre";
+    if (isAdmin() && item.shared === false) { const lock = document.createElement("span"); lock.className = "share-badge"; lock.textContent = "Non partagé"; title.append(" ", lock); }
     highlightSearchTerms(title);
     const favorite = document.createElement("button"); favorite.type = "button"; favorite.className = `favorite-button${isFavorite(item) ? " is-favorite" : ""}`;
     favorite.textContent = isFavorite(item) ? "★" : "☆";
@@ -1340,6 +1382,7 @@ function openForm(item = null) {
     $("existing-file-name").value = item?.fileName || "";
     $("existing-file-type").value = item?.fileType || "";
     document.querySelector(`input[name="item-type"][value="${item?.type || "document"}"]`).checked = true;
+    $("doc-shared").checked = item ? effectivelyShared(item) : false;   // nouvelle fiche : non partagée par défaut ; ancienne fiche : état actuel (visible)
     $("doc-title").value = item?.title || ""; $("doc-date").value = item?.date || "";
     $("doc-theme").value = item?.theme || ""; $("doc-tags").value = item?.tags || "";
     $("doc-summary").value = item?.summary || ""; $("doc-content").value = item?.content || "";
@@ -1430,6 +1473,7 @@ docForm.addEventListener("submit", async (event) => {
             : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim(), theme: deleteField(), tags: deleteField(), summary: deleteField(), content: deleteField(), publishedAt: deleteField(), retentionMonths: deleteField(), expiresAt: deleteField(), fileUrl: deleteField(), filePath: deleteField(), fileName: deleteField(), fileType: deleteField(), fileSize: deleteField() };
         if (type === "document" && item.expiresAt && item.expiresAt < new Date().toISOString().slice(0, 10) && !window.confirm("L’échéance de ce document est déjà passée : il sera supprimé à la prochaine purge automatique. Enregistrer quand même ?")) throw new Error("Enregistrement annulé : modifiez la date du document ou la durée de conservation.");
         const wasNew = !items.some((entry) => entry.id === id), previousPath = items.find((entry) => entry.id === id)?.filePath;
+        item.shared = $("doc-shared").checked;
         await mergeItem(id, item);
         await logActivity({ action: wasNew ? "document.create" : "document.update", resourceType: type, resourceId: id, label: item.title });
         if (item.filePath && item.filePath !== previousPath) {
@@ -1489,7 +1533,7 @@ async function deleteItemRecord(item, { sessionChecked = false } = {}) {
     if (!requireAdmin()) throw new Error("Cette action est réservée aux administrateurs.");
     if (!sessionChecked) await refreshAdminFirestoreSession();
     // Suppression douce : la fiche et son fichier sont conservés 30 jours (voir la corbeille dans les Paramètres).
-    await mergeItem(item.id, { deletedAt: new Date().toISOString(), deletedBy: currentUser?.id || null });
+    await mergeItem(item.id, { deletedAt: new Date().toISOString(), deletedBy: currentUser?.id || null, ...trashChanges(item).set });
     await logActivity({ action: "document.trash", resourceType: item.type === "deadline" ? "deadline" : "document", resourceId: item.id, label: item.title });
 }
 
@@ -2022,7 +2066,7 @@ async function restoreFromTrash(item) {
     const status = $("trash-status");
     try {
         await refreshAdminFirestoreSession();
-        await mergeItem(item.id, { deletedAt: deleteField(), deletedBy: deleteField() });
+        await mergeItem(item.id, { deletedAt: deleteField(), deletedBy: deleteField(), ...restoreChanges(item).set, sharedBeforeTrash: deleteField() });
         await logActivity({ action: "document.restore", resourceType: item.type === "deadline" ? "deadline" : "document", resourceId: item.id, label: item.title });
         status.textContent = `« ${item.title || "Élément"} » a été restauré.`;
     } catch (error) { console.error(error); status.textContent = `Restauration impossible : ${error.message || "erreur inconnue"}`; }

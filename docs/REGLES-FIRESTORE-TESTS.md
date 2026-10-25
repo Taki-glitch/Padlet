@@ -23,3 +23,14 @@
 
 Cas **connu et non corrigé** : un `user` peut lire une fiche en corbeille (#2 sur une fiche avec `deletedAt`). Voir docs/PHASE7.md §4.
 Les écritures de la fonction `admin-users` dans `activityLog` passent par le compte de service (contourne les règles, comme `system/lastPurge`) ; leurs champs supplémentaires (`source`, `oldRole`, `newRole`) ne concernent donc pas la règle #12.
+
+## Cas pour les règles « partage » (`firestore.rules.partage`) — à passer à l'étape 5 de docs/PARTAGE.md
+| # | Chemin | Opération | Acteur | Attendu |
+|---|---|---|---|---|
+| 17 | `padletItems/x` (document `shared: true`) | get | user | autorisé |
+| 18 | `padletItems/y` (document `shared: false` ou en corbeille) | get | user | refusé |
+| 19 | `padletItems/y` (même document) | get | admin | autorisé |
+| 20 | `padletItems/z` (ancien document sans champ `shared`) | get | user | refusé (d'où l'étape 2 obligatoire) |
+| 21 | `padletItems/x` | create `{shared: "oui"}` | admin | refusé (le champ doit être un booléen) |
+
+Le simulateur teste des lectures de documents ; la liste filtrée (`where shared == true`) est contrôlée en vrai avec un compte ordinaire à l'étape 4.

@@ -150,6 +150,10 @@
                 <p>Extrait le texte des PDF dans votre navigateur (aucun envoi à un service externe) pour les retrouver par leur contenu. Jusqu’à 20 000 caractères par PDF, stockés avec la fiche. Les PDF scannés (images) ne contiennent pas de texte extractible.</p>
                 <button id="pdf-index-run" type="button">Indexer les PDF non indexés</button>
                 <p id="pdf-index-status" role="status" aria-live="polite"></p>
+                <h3>Partage avec les utilisateurs</h3>
+                <p id="sharing-summary" role="status" aria-live="polite"></p>
+                <div class="form-actions"><button id="sharing-simulate" type="button">Simuler la préparation du partage</button><button id="sharing-apply" type="button" disabled>Appliquer la préparation</button></div>
+                <p id="sharing-status" role="status" aria-live="polite"></p>
                 <h3>Journal d’activité</h3>
                 <p>Événements administratifs conservés 12 mois. Les règles Firestore interdisent toute modification ou suppression depuis l’application.</p>
                 <button id="activity-load" type="button">Afficher les 50 derniers événements</button>
@@ -220,6 +224,7 @@
                     <label><input type="radio" name="item-type" value="document" checked> Document</label>
                     <label><input type="radio" name="item-type" value="deadline"> Échéance</label>
                 </fieldset>
+                <label class="inline-check"><input type="checkbox" id="doc-shared"> Visible par les utilisateurs (sinon réservé aux administrateurs)</label>
                 <label>Titre <input type="text" id="doc-title" placeholder="Ex. Compte-rendu de réunion" required></label>
                 <label><span id="doc-date-label">Date du document</span> <input type="date" id="doc-date" required></label>
                 <div id="document-fields">

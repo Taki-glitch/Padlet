@@ -229,3 +229,42 @@ test("échéance terminée : exclue de l'export .ics et du comptage, anciennes f
   const { events } = buildCalendarEvents([{ id: "a", type: "deadline", title: "Faite", date: "2026-11-01", done: true }, { id: "b", type: "deadline", title: "À faire", date: "2026-11-02" }]);
   assert.deepEqual(events.map((e) => e.summary), ["À faire"]);
 });
+
+import { isShared, effectivelyShared, trashChanges, restoreChanges, sharingMigrationPlan, SHARING_ENFORCED } from "../modules/sharing.mjs";
+
+test("partage : états, corbeille et restauration conservent l'état de partage", () => {
+  assert.equal(isShared({ shared: true }), true);
+  assert.equal(isShared({}), false, "sans champ : pas « partagée » au sens strict");
+  assert.equal(effectivelyShared({}), true, "ancienne fiche : visible aujourd'hui");
+  assert.equal(effectivelyShared({ shared: false }), false);
+  assert.deepEqual(trashChanges({ shared: true }).set, { shared: false, sharedBeforeTrash: true });
+  assert.deepEqual(trashChanges({ shared: false }).set, { shared: false, sharedBeforeTrash: false });
+  assert.deepEqual(trashChanges({}).set, { shared: false, sharedBeforeTrash: true });
+  assert.deepEqual(restoreChanges({ sharedBeforeTrash: true }).set, { shared: true });
+  assert.deepEqual(restoreChanges({ sharedBeforeTrash: false }).set, { shared: false });
+  assert.deepEqual(restoreChanges({}).set, { shared: false }, "état inconnu : non partagée par prudence");
+});
+
+test("partage : plan de préparation (migration) — aucun changement de visibilité pour les fiches actives", () => {
+  const active = [{ id: "a" }, { id: "b", shared: true }, { id: "c", shared: false }, { id: "d" }];
+  const trashed = [{ id: "t1", deletedAt: "x" }, { id: "t2", deletedAt: "x", shared: true }, { id: "t3", deletedAt: "x", shared: false }, { id: "t4", deletedAt: "x", sharedBeforeTrash: false }];
+  const { writes, counts } = sharingMigrationPlan(active, trashed);
+  assert.deepEqual(writes.map((w) => w.id), ["a", "d", "t1", "t2", "t4"]);
+  assert.deepEqual(writes.find((w) => w.id === "a").patch, { shared: true });
+  assert.deepEqual(writes.find((w) => w.id === "t1").patch, { shared: false, sharedBeforeTrash: true });
+  assert.deepEqual(writes.find((w) => w.id === "t4").patch, { shared: false, sharedBeforeTrash: false });
+  assert.deepEqual(counts, { share: 2, hideTrash: 3, alreadyShared: 1, alreadyPrivate: 1 });
+  assert.deepEqual(sharingMigrationPlan([{ id: "x", shared: true }], []).writes, [], "idempotent : rien à refaire");
+  assert.equal(typeof SHARING_ENFORCED, "boolean");
+});
+
+test("règles « partage » : identiques aux règles actuelles sauf la lecture limitée et le champ shared", () => {
+  const current = readFileSync(new URL("../firestore.rules", import.meta.url), "utf8");
+  const target = readFileSync(new URL("../firestore.rules.partage", import.meta.url), "utf8");
+  assert.match(target, /request\.auth\.token\.role == 'admin' \|\| resource\.data\.shared == true/);
+  assert.match(target, /data\.shared is bool/);
+  const reverted = target.split("\n").slice(2).join("\n")
+    .replace("      // PARTAGE : un utilisateur ordinaire ne lit que les fiches `shared == true` (l'application filtre avec where('shared','==',true)).\n      allow read: if request.auth != null\n        && (request.auth.token.role == 'admin' || resource.data.shared == true);", "      allow read: if request.auth != null;")
+    .replace("<= 52428800))\n        && (!('shared' in data) || data.shared is bool);", "<= 52428800));");
+  assert.equal(reverted, current, "les deux fichiers de règles ont divergé en dehors du partage");
+});

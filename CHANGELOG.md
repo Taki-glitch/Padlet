@@ -2,6 +2,17 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.13.0 — Navigation dans la frise et vue liste
+
+### Nouveautés (module testé ; interface **non vérifiée dans un navigateur**)
+- **Navigation** : boutons Début, Précédent, Aujourd'hui, Suivant, Fin, « Aller à » une date, et « Tout afficher » (réinitialise les filtres). « Précédent/Suivant » passent au regroupement voisin (mois ou année théocratique) ; sans regroupement, ils avancent d'environ 80 % de l'écran.
+- **Vue liste accessible** (case « Vue liste ») : mêmes données et mêmes filtres que la frise graphique, dans l'ordre des dates, avec titres de regroupement, lisible au clavier et par les lecteurs d'écran ; mémorisée avec le zoom et le regroupement. La frise graphique n'est pas modifiée.
+- La zone défilable de la frise est atteignable au clavier (Tab, puis flèches).
+- Aucune date ni donnée n'est modifiée : le regroupement reste purement visuel.
+
+### À savoir
+- Aucune modification des règles Firebase ni des données. 82 tests.
+
 ## 0.12.0 — Audit : correction de régression, contrôles statiques, diagnostic des fiches
 
 ### Correction

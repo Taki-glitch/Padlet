@@ -35,6 +35,7 @@ import { themeCounts, largestFiles, overdueDeadlines, isDone } from "./modules/d
 import { sha256Hex, findDuplicates } from "./modules/duplicates.mjs";
 import { sanitizeSaved, addSaved, removeSaved } from "./modules/savedSearches.mjs";
 import { RECURRENCES, recurrenceFor, nextOccurrence, buildNextItem } from "./modules/recurrence.mjs";
+import { indexForDate, centerScroll, currentIndex, stepTarget } from "./modules/timeline-nav.mjs";
 import { auditItems } from "./modules/schema.mjs";
 import { cleanBulkText, addTag, bulkSummary } from "./modules/bulk.mjs";
 import { FEEDBACK_TYPES, validateFeedback } from "./modules/feedback.mjs";
@@ -49,6 +50,7 @@ const supabase = SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, 
 const authGateway = supabase ? createAuthGateway(supabase) : null;
 let items = [];
 let trashItems = [];
+let timelineNav = null;   // repères de la frise affichée (voir « Navigation dans la frise »)
 let isDragging = false;
 let dragStartX = 0;
 let startScrollLeft = 0;
@@ -572,6 +574,50 @@ $("items-audit-run").addEventListener("click", () => {
     if (problems.length > 15) { const more = document.createElement("p"); more.textContent = `… et ${problems.length - 15} autre(s).`; lines.push(more); }
     box.replaceChildren(summary, ...lines);
 });
+
+// --- Navigation dans la frise (graphique ou liste) : début, fin, aujourd'hui, période précédente/suivante, aller à une date.
+function createTimelineList(dated, grouping) {
+    const wrapper = document.createElement("div");
+    let list = null, lastKey = null;
+    dated.forEach((item) => {
+        const group = timelineGroup(timelineDate(item), grouping);
+        if (!list || (group && group.key !== lastKey)) {
+            if (group) { const heading = document.createElement("h3"); heading.className = "timeline-list-heading"; heading.textContent = group.label; wrapper.append(heading); }
+            list = document.createElement("ol"); list.className = "timeline-list"; list.setAttribute("aria-label", group ? group.label : "Éléments de la frise"); wrapper.append(list);
+            lastKey = group?.key ?? null;
+        }
+        const li = document.createElement("li"); li.dataset.date = timelineDate(item);
+        const time = document.createElement("time"); time.dateTime = timelineDate(item); time.textContent = dateLabel(timelineDate(item));
+        li.append(time, createTimelineEntry(item)); list.append(li);
+    });
+    return wrapper;
+}
+function timelineCurrentIndex() {
+    if (!timelineNav) return -1;
+    return timelineNav.mode === "track" ? currentIndex(timelineScroll.scrollLeft, timelineNav.column, timelineScroll.clientWidth, timelineNav.dates.length) : timelineNav.index;
+}
+function timelineJump(index) {
+    if (!timelineNav || index < 0) { setStatus("Aucun élément daté à atteindre.", true); return; }
+    timelineNav.index = index;
+    if (timelineNav.mode === "track") timelineScroll.scrollTo({ left: centerScroll(index, timelineNav.column, timelineScroll.clientWidth), behavior: "smooth" });
+    else { const target = timelineContainer.querySelectorAll("li")[index]; target?.scrollIntoView({ block: "center", behavior: "smooth" }); target?.querySelector("button")?.focus({ preventScroll: true }); }
+}
+function timelineStep(direction) {
+    if (!timelineNav) { setStatus("Aucun élément daté à atteindre.", true); return; }
+    timelineJump(stepTarget({ starts: timelineNav.starts, index: timelineCurrentIndex(), direction, column: timelineNav.column, viewport: timelineScroll.clientWidth, count: timelineNav.dates.length }));
+}
+$("tl-start").addEventListener("click", () => timelineJump(timelineNav?.dates.length ? 0 : -1));
+$("tl-end").addEventListener("click", () => timelineJump(timelineNav?.dates.length ? timelineNav.dates.length - 1 : -1));
+$("tl-today").addEventListener("click", () => timelineJump(timelineNav ? indexForDate(timelineNav.dates, localDateValue(new Date())) : -1));
+$("tl-prev").addEventListener("click", () => timelineStep(-1));
+$("tl-next").addEventListener("click", () => timelineStep(1));
+$("tl-go").addEventListener("click", () => {
+    const value = $("tl-date").value;
+    if (!value) { setStatus("Choisissez une date.", true); return; }
+    timelineJump(timelineNav ? indexForDate(timelineNav.dates, value) : -1);
+});
+$("tl-all").addEventListener("click", () => { resetFilters(); render(); setStatus("Tous les éléments sont affichés."); });
+$("timeline-list").addEventListener("change", () => updateTimelineView({ list: $("timeline-list").checked }));
 
 // --- Lien direct vers une fiche : #fiche=<id>. Seules les fiches actives déjà autorisées par Firestore sont ouvertes
 // (une fiche en corbeille ou inexistante affiche « introuvable ») ; aucun contenu n'est exposé par l'URL elle-même.
@@ -1411,26 +1457,28 @@ function categoryColor(item) {
 }
 
 function timelineViewState() {
-    const state = (timelineViewState.value ||= { userId: null, zoom: 100, grouping: "none" });
+    const state = (timelineViewState.value ||= { userId: null, zoom: 100, grouping: "none", list: false });
     const userId = currentUser?.id || null;
     if (state.userId !== userId) {
-        state.userId = userId; state.zoom = 100; state.grouping = "none";
+        state.userId = userId; state.zoom = 100; state.grouping = "none"; state.list = false;
         try {
             const stored = JSON.parse(localStorage.getItem(`padlet-timeline-view:${userId}`) || "{}");
             if ([25, 50, 75, 100, 125].includes(stored.zoom)) state.zoom = stored.zoom;
             if (["none", "month", "theocratic"].includes(stored.grouping)) state.grouping = stored.grouping;
+            state.list = stored.list === true;
         } catch { /* préférences illisibles : valeurs par défaut */ }
     }
-    $("timeline-zoom").value = String(state.zoom); $("timeline-grouping").value = state.grouping;
+    $("timeline-zoom").value = String(state.zoom); $("timeline-grouping").value = state.grouping; $("timeline-list").checked = state.list;
     return state;
 }
 function updateTimelineView(changes) {
     const state = Object.assign(timelineViewState(), changes);
-    try { if (state.userId) localStorage.setItem(`padlet-timeline-view:${state.userId}`, JSON.stringify({ zoom: state.zoom, grouping: state.grouping })); } catch { /* stockage indisponible */ }
+    try { if (state.userId) localStorage.setItem(`padlet-timeline-view:${state.userId}`, JSON.stringify({ zoom: state.zoom, grouping: state.grouping, list: state.list })); } catch { /* stockage indisponible */ }
     renderTimeline();
 }
 function renderTimeline() {
     timelineContainer.replaceChildren();
+    timelineNav = null;
     const view = timelineViewState();
     const column = { 25: 96, 50: 150, 75: 200, 100: 250, 125: 310 }[view.zoom] || 250;
     const dated = [], undated = [];
@@ -1441,7 +1489,11 @@ function renderTimeline() {
         timelineContainer.append(createEmpty(hasCriteria ? "Aucun élément ne correspond à vos critères. Réinitialisez les filtres pour tout afficher." : "Votre frise apparaîtra ici."));
         return;
     }
-    if (dated.length) {
+    timelineNav = null;
+    if (dated.length && view.list) {
+        timelineContainer.append(createTimelineList(dated, view.grouping));
+        timelineNav = { mode: "list", dates: dated.map(timelineDate), starts: [], column, index: Math.max(0, indexForDate(dated.map(timelineDate), localDateValue(new Date()))) };
+    } else if (dated.length) {
         const track = document.createElement("div"); track.className = `tl-track tl-zoom-${view.zoom}`; track.style.setProperty("--tl-col", `${column}px`);
         const colors = new Map(), groups = [];
         dated.forEach((item, index) => {
@@ -1467,7 +1519,8 @@ function renderTimeline() {
         const today = localDateValue(new Date());
         let next = dated.findIndex((item) => timelineDate(item) >= today);
         if (next < 0) next = dated.length - 1;
-        timelineScroll.scrollLeft = Math.max(0, next * column - timelineScroll.clientWidth / 2 + column / 2);
+        timelineScroll.scrollLeft = centerScroll(next, column, timelineScroll.clientWidth);
+        timelineNav = { mode: "track", dates: dated.map(timelineDate), starts: groups.map((group) => group.start), column, index: next };
     }
     renderUndatedItems(undated);
 }

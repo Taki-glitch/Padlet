@@ -59,6 +59,11 @@
 - [ ] Dernière occurrence (fin de série) : message « Série terminée », rien de créé
 - [ ] Export .ics d'une échéance récurrente : importée dans l'agenda comme événement répété
 
+## 0.12.0
+- [ ] Choisir une collection dans le filtre : une puce « Collection : … » apparaît, le compteur de filtres l'inclut, « Aucun document… » s'affiche si rien ne correspond
+- [ ] Paramètres → « Contrôler les fiches » : un résumé s'affiche, rien n'est modifié ; noter les fiches listées
+- [ ] GitHub → Actions → « Règles Firestore (émulateur) » → Run workflow : noter le résultat (vert ou rouge)
+
 ## Appareils réels (à cocher seulement si testés sur l'appareil, pas en émulation)
 - [ ] iPhone / Safari : connexion, recherche, aperçu PDF, téléchargement, frise (zoom au doigt), modales (clavier à l'écran)
 - [ ] iPad / Safari : mêmes tests, orientation portrait et paysage

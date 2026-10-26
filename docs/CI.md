@@ -14,3 +14,6 @@ Les imports `https://`, `npm:` et les modules nus (Deno) ne sont pas traités co
 **Bloquer la fusion d'une pull request en échec :** GitHub → *Settings → Branches → Add rule* sur `main` → cocher *Require status checks to pass* → choisir `verify`. (Réglage GitHub à faire manuellement.)
 
 En cas d'échec, ouvrez l'onglet *Actions* de la pull request : le fichier, la ligne et l'import fautifs sont indiqués.
+
+## Règles Firestore sur l'émulateur
+`.github/workflows/rules-emulator.yml` (lancement manuel ou à la modification des règles) exécute `tests-rules/` sur l'émulateur Firebase, sans donnée réelle. Non bloquant au début ; à rendre bloquant après un premier passage vert.

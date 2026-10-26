@@ -29,6 +29,14 @@ function nextDay(date) {
 }
 function stamp(now) { return now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, ""); }
 
+// Règle iCalendar d'une échéance récurrente. Limite : un « chaque mois le 31 » saute les mois courts dans l'agenda,
+// alors que l'application recule au dernier jour du mois.
+const FREQ = { week: "WEEKLY", month: "MONTHLY", year: "YEARLY" };
+function rruleFor(rule) {
+    if (!rule || !FREQ[rule.every]) return "";
+    return `FREQ=${FREQ[rule.every]}${isCivilDate(rule.until) ? `;UNTIL=${compact(rule.until)}` : ""}`;
+}
+
 // items = fiches actives (hors corbeille). Retourne les événements exportables ; ignore les dates invalides.
 export function buildCalendarEvents(items) {
     const events = [], skipped = [];
@@ -36,7 +44,7 @@ export function buildCalendarEvents(items) {
         if (!item?.id) continue;
         if (item.type === "deadline") {
             if (item.done === true) continue;   // échéance terminée : pas exportée
-            if (isCivilDate(item.date)) events.push({ uid: `deadline-${item.id}@padlet`, date: item.date, summary: item.title || "Échéance", description: item.description || "" });
+            if (isCivilDate(item.date)) events.push({ uid: `deadline-${item.recurrence ? item.seriesId || item.id : item.id}@padlet`, date: item.date, summary: item.title || "Échéance", description: item.description || "", rrule: rruleFor(item.recurrence) });
             else skipped.push(item.title || item.id);
         } else if (item.type === "document" && item.expiresAt) {
             if (isCivilDate(item.expiresAt)) events.push({ uid: `expiry-${item.id}@padlet`, date: item.expiresAt, summary: `Expiration : ${item.title || "Sans titre"}`, description: "Fin de la durée de conservation du document." });
@@ -52,6 +60,7 @@ export function buildIcs(events, now = new Date()) {
     for (const event of events) {
         lines.push("BEGIN:VEVENT", `UID:${event.uid}`, `DTSTAMP:${stamp(now)}`,
             `DTSTART;VALUE=DATE:${compact(event.date)}`, `DTEND;VALUE=DATE:${compact(nextDay(event.date))}`,
+            ...(event.rrule ? [`RRULE:${event.rrule}`] : []),
             `SUMMARY:${escapeIcsText(event.summary)}`);
         if (event.description) lines.push(`DESCRIPTION:${escapeIcsText(event.description)}`);
         lines.push("TRANSP:TRANSPARENT", "END:VEVENT");

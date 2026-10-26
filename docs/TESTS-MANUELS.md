@@ -50,6 +50,15 @@
 - [ ] Administrateur : Paramètres → « Afficher les avis » liste l'avis envoyé
 - [ ] Touche Tab : un contour visible suit le focus sur les boutons et les champs
 
+## 0.11.0
+- [ ] Document : champ « Collections » (ex. « Archives, Cours ») ; filtre « Collection » ne montre que ses documents ; « Réinitialiser » le remet à « Toutes »
+- [ ] Recherche du nom d'une collection : le document apparaît avec « Trouvé aussi dans : collections »
+- [ ] Sélection de 2 documents → « Ajouter à la collection » (bilan affiché) ; enregistrer puis réappliquer une recherche avec collection
+- [ ] Échéance : Répétition « Chaque mois », fin au bout de 3 mois ; fiche → « Marquer comme terminée » : la suivante est créée (dates correctes, couleur et description conservées) ; double clic : une seule suivante
+- [ ] Échéance du 31 : la suivante tombe le dernier jour du mois court puis retrouve le 31
+- [ ] Dernière occurrence (fin de série) : message « Série terminée », rien de créé
+- [ ] Export .ics d'une échéance récurrente : importée dans l'agenda comme événement répété
+
 ## Appareils réels (à cocher seulement si testés sur l'appareil, pas en émulation)
 - [ ] iPhone / Safari : connexion, recherche, aperçu PDF, téléchargement, frise (zoom au doigt), modales (clavier à l'écran)
 - [ ] iPad / Safari : mêmes tests, orientation portrait et paysage

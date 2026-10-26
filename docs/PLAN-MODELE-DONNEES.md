@@ -1,6 +1,6 @@
 # Plan : collections, plusieurs fichiers par fiche, versions, récurrences
 
-**Statut : plan seul, rien n'est codé. À valider avant toute migration.** Tous ces changements sont **additifs** : de nouveaux champs optionnels, les anciennes fiches continuent de fonctionner telles quelles (les règles actuelles ne limitent pas les champs inconnus).
+**Statut (0.11.0) : plan validé. §1 Collections et §4 Récurrences : réalisés (voir CHANGELOG). §2 Plusieurs fichiers et §3 Versions : à faire, une livraison chacun, en commençant par la lecture seule.** Tous ces changements sont **additifs** : de nouveaux champs optionnels, les anciennes fiches continuent de fonctionner telles quelles (les règles actuelles ne limitent pas les champs inconnus).
 
 ## 1. Collections (dossiers virtuels)
 - Champ `collections` : liste de noms (texte, ≤ 40 par fiche, chaque nom ≤ 60 caractères) sur la fiche. Une fiche peut être dans plusieurs collections ; aucun fichier n'est dupliqué.

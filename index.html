@@ -66,6 +66,9 @@
                 <label class="filter-control">Tag
                     <select id="tag-filter" aria-label="Filtrer par tag"><option value="">Tous</option></select>
                 </label>
+                <label class="filter-control">Collection
+                    <select id="collection-filter" aria-label="Filtrer par collection"><option value="">Toutes</option></select>
+                </label>
                 <label class="filter-control">Favoris
                     <select id="favorite-filter" aria-label="Filtrer par favoris"><option value="">Tous</option><option value="favorites">Favoris</option></select>
                 </label>
@@ -113,6 +116,7 @@
                     <input id="bulk-value" type="text" maxlength="120" placeholder="Thème ou tag" aria-label="Thème ou tag à appliquer à la sélection">
                     <button id="bulk-theme" type="button">Définir le thème</button>
                     <button id="bulk-tag" type="button">Ajouter le tag</button>
+                    <button id="bulk-collection" type="button">Ajouter à la collection</button>
                 </span>
                 <button id="delete-selected" class="delete hidden" type="button">Supprimer la sélection</button>
             </div>
@@ -243,6 +247,7 @@
                     <label>Thème <input type="text" id="doc-theme" list="existing-themes" placeholder="Ex. Histoire, Code…"></label>
                     <datalist id="existing-themes"></datalist>
                     <label>Tags <input type="text" id="doc-tags" placeholder="Séparés par des virgules"></label>
+                    <label>Collections <input type="text" id="doc-collections" placeholder="Séparées par des virgules (ex. Préparation de cours, Archives)"></label>
                     <label>Résumé <textarea id="doc-summary" placeholder="Résumé du document…" aria-describedby="summary-hint"></textarea></label>
                     <small id="summary-hint">Vous pouvez utiliser Markdown : <strong>**gras**</strong>, <em>*italique*</em>, titres, listes et citations.</small>
                     <label>Contenu ou lien <textarea id="doc-content" placeholder="Notes, contenu complet ou lien…"></textarea></label>
@@ -262,6 +267,8 @@
                 <div id="deadline-fields" class="hidden">
                     <label>Couleur du jalon <input type="color" id="deadline-color" value="#f97316"></label>
                     <label>Description rapide <input type="text" id="deadline-description" placeholder="Ex. Envoyer la version finale"></label>
+                    <label>Répétition <select id="deadline-recurrence"><option value="">Aucune</option><option value="week">Chaque semaine</option><option value="month">Chaque mois</option><option value="year">Chaque année</option></select></label>
+                    <label>Répéter jusqu’au (facultatif) <input type="date" id="deadline-until"></label>
                 </div>
                 <button id="submit-item" type="submit" class="btn-primary">Enregistrer</button>
             </form>

@@ -34,6 +34,7 @@ import { extractPdfText, buildSnippet, loadFirst, pdfIndexSummary, needsPdfIndex
 import { themeCounts, largestFiles, overdueDeadlines, isDone } from "./modules/dashboard.mjs";
 import { sha256Hex, findDuplicates } from "./modules/duplicates.mjs";
 import { sanitizeSaved, addSaved, removeSaved } from "./modules/savedSearches.mjs";
+import { RECURRENCES, recurrenceFor, nextOccurrence, buildNextItem } from "./modules/recurrence.mjs";
 import { cleanBulkText, addTag, bulkSummary } from "./modules/bulk.mjs";
 import { FEEDBACK_TYPES, validateFeedback } from "./modules/feedback.mjs";
 import { guideSteps, guideSeenKey } from "./modules/guide.mjs";
@@ -74,6 +75,7 @@ const searchInput = $("document-search");
 const clearSearchButton = $("clear-search");
 const themeFilter = $("theme-filter");
 const tagFilter = $("tag-filter");
+const collectionFilter = $("collection-filter");
 const favoriteFilter = $("favorite-filter");
 const sortControl = $("sort-control");
 const resultsCount = $("results-count");
@@ -349,11 +351,18 @@ $("read-done").addEventListener("click", async () => {
     try {
         await refreshAdminFirestoreSession();
         const doneAt = localDateValue(new Date());
+        let nextMessage = "";
+        if (!reopening && readModalItem.recurrence) {
+            const next = nextOccurrence(readModalItem);
+            if (!next) nextMessage = " Série terminée : pas de prochaine occurrence.";
+            else if (items.some((entry) => entry.id === next.id)) nextMessage = ` La prochaine occurrence (${dateLabel(next.date)}) existe déjà.`;
+            else { await mergeItem(next.id, buildNextItem(readModalItem, next)); nextMessage = ` Prochaine occurrence créée : ${dateLabel(next.date)}.`; }
+        }
         await mergeItem(id, reopening ? { done: deleteField(), doneAt: deleteField() } : { done: true, doneAt });
         readModalItem = reopening ? { ...readModalItem, done: false, doneAt: undefined } : { ...readModalItem, done: true, doneAt };
         updateReadDoneButton();
         await logActivity({ action: reopening ? "deadline.reopen" : "deadline.complete", resourceType: "deadline", resourceId: id, label: readModalItem.title });
-        setStatus(reopening ? "Échéance rouverte." : "Échéance marquée comme terminée.");
+        setStatus(reopening ? "Échéance rouverte." : `Échéance marquée comme terminée.${nextMessage}`);
     } catch (error) { console.error(error); setStatus("Impossible de modifier l’échéance. Réessayez.", true); }
     finally { button.disabled = false; }
 });
@@ -378,12 +387,12 @@ function renderSavedSearches(selectedName = $("saved-searches").value) {
 $("saved-searches").addEventListener("change", (event) => {
     const entry = loadSavedSearches().find((item) => item.name === event.target.value);
     if (!entry) return;
-    searchInput.value = entry.query; themeFilter.value = entry.theme; tagFilter.value = entry.tag; favoriteFilter.value = entry.favorites; sortControl.value = entry.sort;
+    searchInput.value = entry.query; themeFilter.value = entry.theme; tagFilter.value = entry.tag; collectionFilter.value = entry.collection || ""; favoriteFilter.value = entry.favorites; sortControl.value = entry.sort;
     render();
     setStatus(`Recherche « ${entry.name} » appliquée.`);
 });
 $("save-search").addEventListener("click", () => {
-    const result = addSaved(loadSavedSearches(), { name: $("saved-search-name").value, query: searchInput.value, theme: themeFilter.value, tag: tagFilter.value, favorites: favoriteFilter.value, sort: sortControl.value });
+    const result = addSaved(loadSavedSearches(), { name: $("saved-search-name").value, query: searchInput.value, theme: themeFilter.value, tag: tagFilter.value, collection: collectionFilter.value, favorites: favoriteFilter.value, sort: sortControl.value });
     if (result.error) { setStatus(result.error, true); return; }
     if (!persistSavedSearches(result.list)) { setStatus("Impossible d’enregistrer sur cet appareil (stockage du navigateur indisponible).", true); return; }
     const name = $("saved-search-name").value.trim();
@@ -443,7 +452,7 @@ async function bulkUpdateSelected(description, patchFor) {
     const selected = [...new Map(documentItems().filter((item) => selectedDocumentIds.has(item.id)).map((item) => [item.id, item])).values()];
     if (!selected.length) { setStatus("Aucun document sélectionné.", true); return; }
     if (!window.confirm(`${description} pour ${selected.length} document${selected.length > 1 ? "s" : ""} sélectionné${selected.length > 1 ? "s" : ""} ?`)) return;
-    const buttons = ["bulk-share", "bulk-unshare", "bulk-theme", "bulk-tag"].map((id) => $(id));
+    const buttons = ["bulk-share", "bulk-unshare", "bulk-theme", "bulk-tag", "bulk-collection"].map((id) => $(id));
     buttons.forEach((button) => { button.disabled = true; });
     let done = 0, unchanged = 0; const failures = [];
     try {
@@ -466,6 +475,11 @@ $("bulk-theme").addEventListener("click", () => {
     if (!value) { setStatus("Saisissez le thème à appliquer.", true); return; }
     const theme = canonicalTheme(value);
     bulkUpdateSelected(`Définir le thème « ${theme} »`, (item) => (item.theme === theme ? null : { theme }));
+});
+$("bulk-collection").addEventListener("click", () => {
+    const value = cleanBulkText($("bulk-value").value, 60);
+    if (!value) { setStatus("Saisissez le nom de la collection.", true); return; }
+    bulkUpdateSelected(`Ajouter à la collection « ${value} »`, (item) => { const result = addTag(item.collections, value); return result.changed ? { collections: result.tags } : null; });
 });
 $("bulk-tag").addEventListener("click", () => {
     const value = cleanBulkText($("bulk-value").value, 60);
@@ -726,6 +740,7 @@ function updateOrganizationControls() {
     const tags = organizationOptions(documents.flatMap((item) => formatTags(item.tags)));
     updateSelectOptions(themeFilter, themes);
     updateSelectOptions(tagFilter, tags);
+    updateSelectOptions(collectionFilter, organizationOptions(documents.flatMap((item) => formatTags(item.collections))));
     const themeList = $("existing-themes");
     themeList.replaceChildren(...themes.map(([, label]) => new Option(label, label)));
 }
@@ -816,14 +831,15 @@ function filteredItems() {
     return items.filter((item) => {
         const identity = item.id || item;
         const haystack = normalizeSearchText([
-            item.title, item.summary, item.description, item.tags, item.theme, item.content,
+            item.title, item.summary, item.description, item.tags, item.collections, item.theme, item.content,
             item.fileName, item.fileType, item.date, item.publishedAt, item.expiresAt, item.retentionMonths
         ].filter((value) => value !== null && value !== undefined && value !== "").join(" ")) + foldedPdfText(item);
         const matchesSearch = terms.every((term) => haystack.includes(term));
         const matchesTheme = !themeFilter.value || normalizeOrganizationValue(item.theme) === themeFilter.value;
         const matchesTag = !tagFilter.value || formatTags(item.tags).some((tag) => normalizeOrganizationValue(tag) === tagFilter.value);
+        const matchesCollection = !collectionFilter.value || formatTags(item.collections).some((name) => normalizeOrganizationValue(name) === collectionFilter.value);
         const matchesFavorite = favoriteFilter.value !== "favorites" || (item.type === "document" && isFavorite(item));
-        const matches = matchesSearch && matchesTheme && matchesTag && matchesFavorite;
+        const matches = matchesSearch && matchesTheme && matchesTag && matchesCollection && matchesFavorite;
         if (!matches || seen.has(identity)) return false;
         seen.add(identity);
         return true;
@@ -986,6 +1002,7 @@ function resetFilters() {
     searchInput.value = "";
     themeFilter.value = "";
     tagFilter.value = "";
+    collectionFilter.value = "";
     favoriteFilter.value = "";
     sortControl.value = "date-desc";
     render();
@@ -1499,10 +1516,11 @@ function openForm(item = null) {
     document.querySelector(`input[name="item-type"][value="${item?.type || "document"}"]`).checked = true;
     $("doc-shared").checked = item ? effectivelyShared(item) : false;   // nouvelle fiche : non partagée par défaut ; ancienne fiche : état actuel (visible)
     $("doc-title").value = item?.title || ""; $("doc-date").value = item?.date || "";
-    $("doc-theme").value = item?.theme || ""; $("doc-tags").value = item?.tags || "";
+    $("doc-theme").value = item?.theme || ""; $("doc-tags").value = item?.tags || ""; $("doc-collections").value = item?.collections || "";
     $("doc-summary").value = item?.summary || ""; $("doc-content").value = item?.content || "";
     $("doc-retention").value = item?.retentionMonths || "";
     $("deadline-color").value = item?.color || "#f97316"; $("deadline-description").value = item?.description || "";
+    $("deadline-recurrence").value = item?.recurrence?.every || ""; $("deadline-until").value = item?.recurrence?.until || "";
     $("modal-title").textContent = item ? `Modifier ${item.type === "deadline" ? "l'échéance" : "le document"}` : "Ajouter un élément";
     toggleTypeFields(); updateExpirationPreview(); formModal.classList.remove("hidden"); $("doc-title").focus();
     docFormBaseline = formSnapshot(docForm);
@@ -1584,8 +1602,8 @@ docForm.addEventListener("submit", async (event) => {
         uploadedFilePath = $("doc-file").files[0] ? file.filePath : "";
         const oldFilePath = $("existing-file-path").value;
         const item = type === "document"
-            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: canonicalTheme($("doc-theme").value), tags: $("doc-tags").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths, expiresAt, color: deleteField(), description: deleteField(), ...file }
-            : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim(), theme: deleteField(), tags: deleteField(), summary: deleteField(), content: deleteField(), publishedAt: deleteField(), retentionMonths: deleteField(), expiresAt: deleteField(), fileUrl: deleteField(), filePath: deleteField(), fileName: deleteField(), fileType: deleteField(), fileSize: deleteField() };
+            ? { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, theme: canonicalTheme($("doc-theme").value), tags: $("doc-tags").value.trim(), collections: $("doc-collections").value.trim(), summary: $("doc-summary").value.trim(), content: $("doc-content").value.trim(), publishedAt: itemOrExistingPublishedAt(id), retentionMonths, expiresAt, color: deleteField(), description: deleteField(), ...file }
+            : { id, type, title: $("doc-title").value.trim(), date: $("doc-date").value, color: $("deadline-color").value, description: $("deadline-description").value.trim(), ...recurrenceFields(id), theme: deleteField(), tags: deleteField(), collections: deleteField(), summary: deleteField(), content: deleteField(), publishedAt: deleteField(), retentionMonths: deleteField(), expiresAt: deleteField(), fileUrl: deleteField(), filePath: deleteField(), fileName: deleteField(), fileType: deleteField(), fileSize: deleteField() };
         if (type === "document" && item.expiresAt && item.expiresAt < new Date().toISOString().slice(0, 10) && !window.confirm("L’échéance de ce document est déjà passée : il sera supprimé à la prochaine purge automatique. Enregistrer quand même ?")) throw new Error("Enregistrement annulé : modifiez la date du document ou la durée de conservation.");
         const wasNew = !items.some((entry) => entry.id === id), previousPath = items.find((entry) => entry.id === id)?.filePath;
         item.shared = $("doc-shared").checked;
@@ -1953,7 +1971,7 @@ $("admin-create-user-form").addEventListener("submit", async (event) => {
 document.querySelectorAll('input[name="item-type"]').forEach((input) => input.addEventListener("change", toggleTypeFields));
 searchInput.addEventListener("input", render);
 clearSearchButton.addEventListener("click", () => { searchInput.value = ""; searchInput.focus(); render(); });
-[themeFilter, tagFilter, favoriteFilter, sortControl].forEach((control) => control.addEventListener("change", render));
+[themeFilter, tagFilter, collectionFilter, favoriteFilter, sortControl].forEach((control) => control.addEventListener("change", render));
 gridViewButton.addEventListener("click", () => setDisplayMode("grid"));
 listViewButton.addEventListener("click", () => setDisplayMode("list"));
 selectModeButton.addEventListener("click", () => setSelectionMode(!selectionMode));
@@ -2323,6 +2341,14 @@ function mergeItem(id, data) {
     const patch = { ...data };
     for (const key of nullFieldsToDelete(stored, data)) patch[key] = deleteField();
     return setDoc(doc(db, "padletItems", id), patch, { merge: true });
+}
+// Champs de répétition d'une échéance d'après le formulaire (erreur claire si la date de fin est incohérente).
+function recurrenceFields(id) {
+    const result = recurrenceFor({ every: $("deadline-recurrence").value, until: $("deadline-until").value }, $("doc-date").value);
+    if (!result) return { recurrence: deleteField(), seriesId: deleteField(), occurrence: deleteField() };
+    if (result.error) throw new Error(result.error);
+    const stored = items.find((entry) => entry.id === id);
+    return { recurrence: result.recurrence, seriesId: stored?.seriesId || id, occurrence: stored?.occurrence || 0 };
 }
 function pdfError(error, code, message) { const failure = new Error(message ?? error?.message ?? "erreur inconnue"); failure.code = code; failure.cause = error; return failure; }
 async function indexPdfText(item) {

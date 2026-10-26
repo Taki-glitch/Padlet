@@ -2,6 +2,17 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.11.0 — Collections et échéances récurrentes
+
+### Nouveautés (modules testés ; interface **non vérifiée dans un navigateur**)
+- **Collections** (dossiers virtuels, sans doublon de fichier) : champ « Collections » dans le formulaire (noms séparés par des virgules, comme les tags), filtre « Collection », recherche, action groupée « Ajouter à la collection », recherches enregistrées. Thèmes et tags restent inchangés.
+- **Échéances récurrentes** : « Répétition » (chaque semaine / mois / année) et « Répéter jusqu'au » dans le formulaire d'une échéance. Terminer une échéance crée la suivante (identifiant stable `<série>-<n>` : pas de doublon en cas de double clic ou de nouvel essai). Le jour du mois d'origine est conservé (31 → 28 février → 31 mars). Rouvrir une échéance ne supprime pas la suivante.
+- **Export .ics** : une échéance récurrente est exportée avec la règle de répétition (`RRULE`) et un identifiant de série ; l'occurrence terminée n'est pas exportée. Limite : un « chaque mois le 31 » saute les mois courts dans l'agenda, alors que l'application recule au dernier jour du mois.
+
+### À savoir
+- Aucune modification de `firestore.rules` ni de `firestore.rules.partage` : les nouveaux champs (`collections`, `recurrence`, `seriesId`, `occurrence`) sont des champs facultatifs.
+- 75 tests.
+
 ## 0.10.0 — Actions groupées, guide, avis, accessibilité
 
 ### Nouveautés (modules testés ; interface **non vérifiée dans un navigateur**)

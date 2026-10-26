@@ -366,3 +366,35 @@ test("collections : trouvées par la recherche, signalées si invisibles sur la 
   assert.equal(sanitizeSaved([{ name: "n", collection: "Archives" }])[0].collection, "Archives");
   assert.ok(addSaved([], { name: "Collec", collection: "Archives" }).list, "une collection seule est un critère valide");
 });
+
+import { indexForDate, centerScroll, currentIndex, adjacentGroupStart, pageStep, stepTarget } from "../modules/timeline-nav.mjs";
+
+test("frise : aller à une date, centrage, regroupement précédent/suivant, saut d'écran", () => {
+  const dates = ["2026-01-10", "2026-01-20", "2026-03-05", "2026-09-01", "2026-09-02"];
+  assert.equal(indexForDate(dates, "2026-01-20"), 1);
+  assert.equal(indexForDate(dates, "2026-02-01"), 2, "première date >= cible");
+  assert.equal(indexForDate(dates, "2030-01-01"), 4, "après la fin : dernier élément");
+  assert.equal(indexForDate(dates, "2000-01-01"), 0);
+  assert.equal(indexForDate([], "2026-01-01"), -1);
+  assert.equal(centerScroll(0, 250, 800), 0, "jamais négatif");
+  assert.equal(centerScroll(10, 250, 800), 10 * 250 - 400 + 125);
+  assert.equal(currentIndex(centerScroll(3, 250, 800), 250, 800, 5), 3, "aller-retour centrage / index");
+  assert.equal(currentIndex(99999, 250, 800, 5), 4);
+  assert.equal(currentIndex(0, 250, 800, 0), -1);
+  const starts = [0, 2, 3];
+  assert.equal(adjacentGroupStart(starts, 0, 1), 2);
+  assert.equal(adjacentGroupStart(starts, 2, 1), 3);
+  assert.equal(adjacentGroupStart(starts, 3, 1), null);
+  assert.equal(adjacentGroupStart(starts, 3, -1), 2);
+  assert.equal(adjacentGroupStart(starts, 1, -1), 0, "au milieu d'un groupe : retour à son début");
+  assert.equal(adjacentGroupStart(starts, 0, -1), null);
+  assert.equal(pageStep(250, 800), 2);
+  assert.equal(pageStep(310, 100), 1);
+  const base = { column: 250, viewport: 800, count: 5 };
+  assert.equal(stepTarget({ ...base, starts, index: 0, direction: 1 }), 2);
+  assert.equal(stepTarget({ ...base, starts: [], index: 1, direction: 1 }), 3, "sans regroupement : une page");
+  assert.equal(stepTarget({ ...base, starts: [], index: 4, direction: 1 }), 4, "borné à la fin");
+  assert.equal(stepTarget({ ...base, starts: [], index: 0, direction: -1 }), 0, "borné au début");
+  assert.equal(stepTarget({ ...base, starts, index: 3, direction: 1 }), 4, "dernier groupe : une page, borné");
+  assert.equal(stepTarget({ ...base, count: 0, starts: [], index: 0, direction: 1 }), -1);
+});

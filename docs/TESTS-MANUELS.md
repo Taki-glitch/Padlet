@@ -64,6 +64,15 @@
 - [ ] Paramètres → « Contrôler les fiches » : un résumé s'affiche, rien n'est modifié ; noter les fiches listées
 - [ ] GitHub → Actions → « Règles Firestore (émulateur) » → Run workflow : noter le résultat (vert ou rouge)
 
+## 0.13.0
+- [ ] Frise : Début / Fin / Aujourd'hui centrent le bon élément ; « Aller à » une date atteint le premier élément à cette date ou après
+- [ ] Regroupement « Année théocratique » : Précédent/Suivant passent d'un groupe (sept. → août) à l'autre
+- [ ] Sans regroupement : Précédent/Suivant avancent d'un écran ; aucun saut hors des limites
+- [ ] « Tout afficher » vide les filtres et la recherche ; la frise montre tous les éléments
+- [ ] « Vue liste » : mêmes éléments, ordre chronologique, ouverture d'un élément au clavier (Tab, Entrée) ; décocher revient à la frise graphique ; le choix est retenu au rechargement
+- [ ] Frise graphique : Tab sur la zone défilable puis flèches gauche/droite la font défiler
+- [ ] Téléphone : les boutons de navigation passent à la ligne sans déborder
+
 ## Appareils réels (à cocher seulement si testés sur l'appareil, pas en émulation)
 - [ ] iPhone / Safari : connexion, recherche, aperçu PDF, téléchargement, frise (zoom au doigt), modales (clavier à l'écran)
 - [ ] iPad / Safari : mêmes tests, orientation portrait et paysage

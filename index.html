@@ -131,9 +131,20 @@
             <div class="timeline-toolbar" aria-label="Affichage de la frise">
                 <label>Zoom <select id="timeline-zoom"><option value="25">25 %</option><option value="50">50 %</option><option value="75">75 %</option><option value="100" selected>100 %</option><option value="125">125 %</option></select></label>
                 <label>Regrouper par <select id="timeline-grouping"><option value="none">Aucun regroupement</option><option value="month">Mois</option><option value="theocratic">Année théocratique</option></select></label>
+                <label class="inline-check"><input type="checkbox" id="timeline-list"> Vue liste (accessible)</label>
+            </div>
+            <div class="timeline-nav" role="group" aria-label="Navigation dans la frise">
+                <button id="tl-start" type="button">Début</button>
+                <button id="tl-prev" type="button">Précédent</button>
+                <button id="tl-today" type="button">Aujourd’hui</button>
+                <button id="tl-next" type="button">Suivant</button>
+                <button id="tl-end" type="button">Fin</button>
+                <label>Aller à <input type="date" id="tl-date"></label>
+                <button id="tl-go" type="button">Aller</button>
+                <button id="tl-all" type="button">Tout afficher</button>
             </div>
             <div class="timeline-help">Documents et échéances sont placés dans l’ordre de leur date, avec une couleur par thème. Faites glisser pour parcourir.</div>
-            <div id="timeline-scroll" class="timeline-scroll" aria-label="Frise défilable horizontalement">
+            <div id="timeline-scroll" class="timeline-scroll" tabindex="0" aria-label="Frise défilable horizontalement (flèches gauche et droite)">
                 <div id="timeline-container" class="timeline-container"></div>
             </div>
         </section>

@@ -11,7 +11,7 @@ export function searchTerms(query = "") {
 
 // Champs indexés par la recherche mais invisibles (ou non surlignés) sur la carte. Le titre et le résumé sont surlignés.
 const HIDDEN_FIELDS = [
-    ["theme", "thème"], ["tags", "tags"], ["content", "contenu"], ["description", "description"],
+    ["theme", "thème"], ["tags", "tags"], ["collections", "collections"], ["content", "contenu"], ["description", "description"],
     ["fileName", "nom du fichier"], ["fileType", "type de fichier"], ["date", "date"],
     ["publishedAt", "date d’ajout"], ["expiresAt", "date d’expiration"], ["retentionMonths", "durée de conservation"]
 ];

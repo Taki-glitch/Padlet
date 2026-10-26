@@ -35,6 +35,7 @@ import { themeCounts, largestFiles, overdueDeadlines, isDone } from "./modules/d
 import { sha256Hex, findDuplicates } from "./modules/duplicates.mjs";
 import { sanitizeSaved, addSaved, removeSaved } from "./modules/savedSearches.mjs";
 import { RECURRENCES, recurrenceFor, nextOccurrence, buildNextItem } from "./modules/recurrence.mjs";
+import { auditItems } from "./modules/schema.mjs";
 import { cleanBulkText, addTag, bulkSummary } from "./modules/bulk.mjs";
 import { FEEDBACK_TYPES, validateFeedback } from "./modules/feedback.mjs";
 import { guideSteps, guideSeenKey } from "./modules/guide.mjs";
@@ -560,6 +561,18 @@ document.addEventListener("keydown", (event) => {
     if (!$("feedback-modal").classList.contains("hidden")) closeFeedback();
 });
 
+// --- Contrôle des fiches (administrateur, lecture seule) : fiches que les règles refuseraient, champs inconnus, partage absent.
+$("items-audit-run").addEventListener("click", () => {
+    if (!requireAdmin()) return;
+    const box = $("items-audit-result"), report = auditItems([...items, ...trashItems]);
+    const { counts, problems } = report;
+    const summary = document.createElement("p");
+    summary.textContent = `${counts.total} fiche(s) contrôlée(s) (corbeille comprise) : ${counts.ruleProblems} avec un problème de règles, ${counts.unknown} avec un champ inconnu, ${counts.missingShared} sans état de partage. Rien n’a été modifié.`;
+    const lines = problems.slice(0, 15).map((entry) => { const div = document.createElement("div"); div.className = "feedback-entry"; div.textContent = `« ${entry.title} » : ${entry.issues.join(" · ")}`; return div; });
+    if (problems.length > 15) { const more = document.createElement("p"); more.textContent = `… et ${problems.length - 15} autre(s).`; lines.push(more); }
+    box.replaceChildren(summary, ...lines);
+});
+
 // --- Lien direct vers une fiche : #fiche=<id>. Seules les fiches actives déjà autorisées par Firestore sont ouvertes
 // (une fiche en corbeille ou inexistante affiche « introuvable ») ; aucun contenu n'est exposé par l'URL elle-même.
 let handledHashId = "";
@@ -941,7 +954,7 @@ function render() {
 function renderResultsCount() {
     const count = filteredItems().filter((item) => item.type === "document").length;
     const hasSearch = Boolean(searchInput.value.trim());
-    const hasFilters = Boolean(themeFilter.value || tagFilter.value || favoriteFilter.value);
+    const hasFilters = Boolean(themeFilter.value || tagFilter.value || collectionFilter.value || favoriteFilter.value);
     if (!count && (hasSearch || hasFilters)) resultsCount.textContent = "Aucun document ne correspond à vos critères.";
     else if (hasSearch) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à votre recherche`;
     else if (hasFilters) resultsCount.textContent = `${count} document${count > 1 ? "s" : ""} correspondant à vos filtres`;
@@ -950,13 +963,14 @@ function renderResultsCount() {
 
 function renderActiveFilters() {
     activeFilters.replaceChildren();
-    const filterCount = [themeFilter.value, tagFilter.value, favoriteFilter.value].filter(Boolean).length + (sortControl.value !== "date-desc" ? 1 : 0);
+    const filterCount = [themeFilter.value, tagFilter.value, collectionFilter.value, favoriteFilter.value].filter(Boolean).length + (sortControl.value !== "date-desc" ? 1 : 0);
     $("filters-badge").textContent = String(filterCount); $("filters-badge").classList.toggle("hidden", !filterCount);
     const criteria = [];
     const query = searchInput.value.trim();
     if (query) criteria.push({ label: `Recherche : ${query}`, clear: () => { searchInput.value = ""; } });
     if (themeFilter.value) criteria.push({ label: `Thème : ${themeFilter.selectedOptions[0]?.textContent || themeFilter.value}`, clear: () => { themeFilter.value = ""; } });
     if (tagFilter.value) criteria.push({ label: `Tag : ${tagFilter.selectedOptions[0]?.textContent || tagFilter.value}`, clear: () => { tagFilter.value = ""; } });
+    if (collectionFilter.value) criteria.push({ label: `Collection : ${collectionFilter.selectedOptions[0]?.textContent || collectionFilter.value}`, clear: () => { collectionFilter.value = ""; } });
     if (favoriteFilter.value) criteria.push({ label: "Favoris", clear: () => { favoriteFilter.value = ""; } });
     const selectedSort = sortControl.options[sortControl.selectedIndex];
     criteria.push({ label: `Tri : ${selectedSort?.textContent || sortControl.value}`, clear: () => { sortControl.value = "date-desc"; } });
@@ -1015,7 +1029,7 @@ function renderThemes() {
     listViewButton.setAttribute("aria-pressed", String(displayMode === "list"));
     const documents = filteredItems().filter((item) => item.type === "document");
     if (!documents.length) {
-        const hasCriteria = Boolean(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value);
+        const hasCriteria = Boolean(searchInput.value.trim() || themeFilter.value || tagFilter.value || collectionFilter.value || favoriteFilter.value);
         const emptyMessage = favoriteFilter.value === "favorites"
             ? "Aucun document favori ne correspond à ces critères. Vous pouvez réinitialiser les filtres pour tout afficher."
             : hasCriteria
@@ -1423,7 +1437,7 @@ function renderTimeline() {
     filteredItems().forEach((item) => (parseTimelineDate(item) ? dated : undated).push(item));
     dated.sort(sortTimelineByDate);
     if (!dated.length && !undated.length) {
-        const hasCriteria = Boolean(searchInput.value.trim() || themeFilter.value || tagFilter.value || favoriteFilter.value);
+        const hasCriteria = Boolean(searchInput.value.trim() || themeFilter.value || tagFilter.value || collectionFilter.value || favoriteFilter.value);
         timelineContainer.append(createEmpty(hasCriteria ? "Aucun élément ne correspond à vos critères. Réinitialisez les filtres pour tout afficher." : "Votre frise apparaîtra ici."));
         return;
     }

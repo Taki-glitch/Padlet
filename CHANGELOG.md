@@ -2,6 +2,21 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 0.12.0 — Audit : correction de régression, contrôles statiques, diagnostic des fiches
+
+### Correction
+- Le filtre « Collection » (0.11.0) est maintenant compté dans les puces de critères, le compteur de filtres, le message « aucun résultat » et l'état vide.
+
+### Nouveautés (interface **non vérifiée dans un navigateur**)
+- Paramètres → « Contrôler les fiches (lecture seule) » : fiches que les règles refuseraient, champs inconnus, partage absent. Ne modifie rien. Prépare un éventuel durcissement des règles.
+
+### Tests
+- `tests/security-static.test.mjs` : pas d'injection HTML ni d'`eval`, `rel=noopener` sur les liens, collections et accès des règles, vérification du jeton dans les fonctions sans contrôle de passerelle, cohérence des filtres, schéma des fiches. 81 tests.
+- `tests-rules/` et `.github/workflows/rules-emulator.yml` : tests des règles sur l'émulateur Firebase, **écrits mais jamais exécutés** ; non bloquants au premier passage.
+
+### Documentation
+- `docs/AUDIT-0.12.md` (constats, risques, points non vérifiables), `docs/CSP.md` (étude, non appliquée).
+
 ## 0.11.0 — Collections et échéances récurrentes
 
 ### Nouveautés (modules testés ; interface **non vérifiée dans un navigateur**)

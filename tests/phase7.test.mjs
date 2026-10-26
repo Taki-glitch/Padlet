@@ -215,7 +215,7 @@ test("recherches enregistrées : ajout, remplacement, validation, limite, suppre
   assert.equal(list.find((s) => s.name === "pdf SANTÉ").query, "nouveau");
   assert.deepEqual(removeSaved(list, "FAVORIS").map((s) => s.name), ["pdf SANTÉ"]);
   assert.deepEqual(sanitizeSaved("pas une liste"), []);
-  assert.deepEqual(sanitizeSaved([null, 3, { name: "" }, { name: "ok", favorites: "x", sort: "" }]), [{ name: "ok", query: "", theme: "", tag: "", favorites: "", sort: "date-desc" }]);
+  assert.deepEqual(sanitizeSaved([null, 3, { name: "" }, { name: "ok", favorites: "x", sort: "" }]), [{ name: "ok", query: "", theme: "", tag: "", collection: "", favorites: "", sort: "date-desc" }]);
   const many = Array.from({ length: SAVED_SEARCH_MAX }, (_, i) => ({ name: `r${i}`, query: "q" }));
   assert.match(addSaved(many, { name: "de trop", query: "q" }).error, /Limite/);
   assert.ok(addSaved(many, { name: "r3", query: "autre" }).list, "remplacer à la limite reste possible");
@@ -308,4 +308,61 @@ test("guide : contenu selon le rôle, une clé par compte", () => {
   assert.ok(admin.some((title) => /partager/.test(title)));
   assert.equal(guideSeenKey("u1"), "padlet-guide-seen:u1");
   assert.equal(guideSeenKey(""), "");
+});
+
+import { RECURRENCES, parseCivil, addPeriod, recurrenceFor, nextOccurrence, buildNextItem } from "../modules/recurrence.mjs";
+
+test("récurrence : périodes, fin de mois sans dérive, années bissextiles", () => {
+  assert.equal(addPeriod("2026-10-24", "week", 24), "2026-10-31");
+  assert.equal(addPeriod("2026-12-28", "week", 28), "2027-01-04", "changement d'année");
+  assert.equal(addPeriod("2026-01-31", "month", 31), "2026-02-28");
+  assert.equal(addPeriod("2026-02-28", "month", 31), "2026-03-31", "retrouve le 31 (pas de dérive)");
+  assert.equal(addPeriod("2028-01-31", "month", 31), "2028-02-29", "année bissextile");
+  assert.equal(addPeriod("2026-12-15", "month", 15), "2027-01-15");
+  assert.equal(addPeriod("2028-02-29", "year", 29), "2029-02-28");
+  assert.equal(addPeriod("2026-10-24", "year", 24), "2027-10-24");
+  assert.equal(addPeriod("pas une date", "month", 1), null);
+  assert.equal(addPeriod("2026-10-24", "decade", 1), null);
+  assert.deepEqual(Object.keys(RECURRENCES), ["week", "month", "year"]);
+  assert.equal(parseCivil("2026-02-30"), null);
+});
+
+test("récurrence : règle du formulaire et prochaine occurrence sans doublon", () => {
+  assert.equal(recurrenceFor({ every: "" }, "2026-10-24"), null);
+  assert.match(recurrenceFor({ every: "month" }, "").error, /date/);
+  assert.match(recurrenceFor({ every: "month", until: "2026-01-01" }, "2026-10-24").error, /après/);
+  assert.match(recurrenceFor({ every: "x" }, "2026-10-24").error, /invalide/);
+  const { recurrence } = recurrenceFor({ every: "month", until: "2027-01-31" }, "2026-10-31");
+  assert.deepEqual(recurrence, { every: "month", until: "2027-01-31", anchorDay: 31 });
+  const first = { id: "abc", type: "deadline", title: "Rapport", date: "2026-10-31", recurrence, color: "#112233", shared: false };
+  const n1 = nextOccurrence(first);
+  assert.deepEqual(n1, { id: "abc-1", date: "2026-11-30", occurrence: 1 });
+  assert.deepEqual(nextOccurrence(first), n1, "même résultat à chaque appel : identifiant stable, donc jamais de doublon");
+  const created = buildNextItem(first, n1);
+  assert.deepEqual([created.date, created.title, created.shared, created.seriesId, created.occurrence, created.color], ["2026-11-30", "Rapport", false, "abc", 1, "#112233"]);
+  const n2 = nextOccurrence({ ...created, id: n1.id });
+  assert.equal(n2.id, "abc-2");
+  assert.equal(nextOccurrence({ ...created, id: "abc-3", date: "2027-01-31", occurrence: 3 }), null, "fin de série (until dépassé)");
+  assert.equal(nextOccurrence({ id: "x", date: "2026-10-24" }), null, "pas de récurrence");
+});
+
+test("ics : échéance récurrente = UID de série + RRULE ; l'occurrence terminée n'est pas exportée", () => {
+  const rule = { every: "month", until: "2027-03-31", anchorDay: 15 };
+  const items = [
+    { id: "abc-1", type: "deadline", title: "Rapport", date: "2026-11-15", recurrence: rule, seriesId: "abc", occurrence: 1 },
+    { id: "abc", type: "deadline", title: "Rapport", date: "2026-10-15", recurrence: rule, seriesId: "abc", done: true },
+    { id: "w", type: "deadline", title: "Hebdo", date: "2026-11-02", recurrence: { every: "week" }, seriesId: "w" }
+  ];
+  const { events } = buildCalendarEvents(items);
+  assert.deepEqual(events.map((e) => [e.uid, e.rrule]), [["deadline-w@padlet", "FREQ=WEEKLY"], ["deadline-abc@padlet", "FREQ=MONTHLY;UNTIL=20270331"]]);
+  const ics = buildIcs(events, new Date("2026-10-24T00:00:00Z"));
+  assert.match(ics, /RRULE:FREQ=MONTHLY;UNTIL=20270331\r\n/);
+  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 2);
+});
+
+test("collections : trouvées par la recherche, signalées si invisibles sur la carte, sauvegardées", () => {
+  const item = { title: "Plan", summary: "x", collections: "Préparation de cours, Archives" };
+  assert.deepEqual(hiddenMatchFields(item, searchTerms("archives")), ["collections"]);
+  assert.equal(sanitizeSaved([{ name: "n", collection: "Archives" }])[0].collection, "Archives");
+  assert.ok(addSaved([], { name: "Collec", collection: "Archives" }).list, "une collection seule est un critère valide");
 });

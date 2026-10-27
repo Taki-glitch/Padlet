@@ -502,7 +502,9 @@ test("fonctions serveur : bloc CORS/MFA identique et comportement (liste d'origi
   const admin = extract("supabase/functions/admin-users/index.ts"), custom = extract("supabase/functions/firebase-custom-token/index.ts");
   assert.equal(admin, custom, "le bloc CORS/MFA doit être identique dans les deux fonctions");
   const body = stripTypeScriptTypes(admin.replace(/Deno\.env\.get\("ALLOWED_ORIGINS"\) \?\? ""/, '""').replace(/Deno\.env\.get\("REQUIRE_MFA_FOR_ADMIN"\) === "true"/, "false"));
-  const mod = await import("data:text/javascript," + encodeURIComponent(`${body}\nexport { corsHeadersFor, jwtAal, mfaMissing };`));
+  const mod = await import("data:text/javascript," + encodeURIComponent(`${body}\nexport { corsHeadersFor, jwtAal, mfaMissing, parseOrigins };`));
+  assert.deepEqual(mod.parseOrigins("https://taki-glitch.github.io/Padlet/, https://x.example/ ,,"), ["https://taki-glitch.github.io", "https://x.example"], "barre finale et chemin tolérés");
+  assert.deepEqual(mod.parseOrigins(""), []);
   const base = { "Access-Control-Allow-Methods": "POST" };
   assert.equal(mod.corsHeadersFor("https://x", [], base)["Access-Control-Allow-Origin"], "*", "sans liste : comportement d'avant");
   const allowed = ["https://taki-glitch.github.io"];

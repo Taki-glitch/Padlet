@@ -10,7 +10,7 @@ Aucun secret ne doit être dans le dépôt (la CI le vérifie). Les secrets vive
 | `REQUIRE_MFA_FOR_ADMIN` | `true` = deuxième étape exigée des administrateurs (voir docs/MFA.md) | non |
 
 ## Limiter les origines (CORS)
-Ajoute `ALLOWED_ORIGINS` = `https://taki-glitch.github.io` (sans barre finale ni `/Padlet/`), puis **redéploie** `admin-users` et `firebase-custom-token`. Teste immédiatement la connexion. Si tu changes un jour de nom de domaine, mets à jour ce secret **avant**, sinon plus personne ne pourra se connecter. Retour arrière : supprimer le secret.
+Ajoute `ALLOWED_ORIGINS` = `https://taki-glitch.github.io` (depuis la rc.2 une barre finale ou `/Padlet/` sont tolérés ; avant, ils bloquaient la connexion), puis **redéploie** `admin-users` et `firebase-custom-token`. Teste immédiatement la connexion. Si tu changes un jour de nom de domaine, mets à jour ce secret **avant**, sinon plus personne ne pourra se connecter. Retour arrière : supprimer le secret.
 
 ## Rotation (à faire si un secret a pu fuiter, ou une fois par an)
 **Clé de compte de service Firebase** (`FIREBASE_PRIVATE_KEY`) :
@@ -24,3 +24,8 @@ Ajoute `ALLOWED_ORIGINS` = `https://taki-glitch.github.io` (sans barre finale ni
 **Clé publique (anon / publishable)** : pas un secret ; la changer oblige à mettre à jour `supabase-config.js` sur GitHub.
 
 Ne colle jamais une clé dans une conversation, une issue GitHub ou un fichier du dépôt. Active **Secret scanning** et **Push protection** sur GitHub (Settings → Code security).
+
+## Si la connexion échoue après un déploiement (« Failed to send a request to the Edge Function »)
+1. Supabase → Edge Functions → Secrets : si `ALLOWED_ORIGINS` existe, **supprime-le** (ou corrige-le) puis redéploie la fonction.
+2. Ouvre `https://<ton-projet>.supabase.co/functions/v1/firebase-custom-token` dans le navigateur : `{"error":"Non authentifié"}` = la fonction répond.
+3. Sinon, remets l'ancien code (GitHub → History du fichier) et redéploie.

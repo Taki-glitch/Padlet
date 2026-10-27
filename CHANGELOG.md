@@ -2,6 +2,13 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 1.0.0-rc.2 — Fonctions serveur plus tolérantes
+
+- `ALLOWED_ORIGINS` : chaque adresse est ramenée à son origine ; une barre finale ou un chemin (`/Padlet/`) saisis par erreur ne bloquent plus la connexion. Test ajouté.
+- `firebase-custom-token` autorise aussi l'en-tête `x-client-info` (envoyé par la bibliothèque Supabase), comme `admin-users`.
+- Contexte : après le déploiement de la rc.1, un utilisateur a vu « Changement de session impossible / Failed to send a request to the Edge Function ». Cause **non confirmée** à ce stade (secret `ALLOWED_ORIGINS` mal formé suspecté) ; le retour à l'ancien code des fonctions rétablit l'état précédent.
+- 89 tests.
+
 ## 1.0.0-rc.1 — Version candidate 1.0.0
 
 Toutes les fonctions listées ci-dessous sont dans le code et leurs calculs sont testés ; **l'interface n'a pas été vue dans un navigateur**. Passage en 1.0.0 : docs/RELEASE-1.0.0.md.

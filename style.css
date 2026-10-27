@@ -310,3 +310,22 @@ button.dashboard-metric:hover, button.dashboard-list-item:hover { background:var
 .timeline-list { list-style:none; margin:0; padding:0; display:grid; gap:.6rem; }
 .timeline-list-heading { margin:1rem 0 .2rem; font-size:1rem; }
 @media print { .timeline-nav { display:none !important; } }
+
+/* --- 1.0.0-rc.1 : bandeaux, calendrier, lien d'évitement --- */
+.skip-link { position:absolute; left:-999px; top:0; z-index:1000; padding:.5rem .8rem; background:#fff; color:#111; border:2px solid var(--primary, #4f46e5); }
+.skip-link:focus { left:.5rem; top:.5rem; }
+.banner { display:flex; flex-wrap:wrap; align-items:center; gap:.6rem; padding:.55rem 1rem; background:#eef2ff; border-bottom:1px solid #c7d2fe; font-size:.9rem; }
+.banner-warning { background:#fef3c7; border-color:#fcd34d; }
+.dashboard-wide { grid-column:1 / -1; }
+.calendar-nav { display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; margin-bottom:.5rem; }
+.calendar-grid { display:grid; grid-template-columns:repeat(7, minmax(0, 1fr)); gap:2px; font-size:.8rem; }
+.calendar-head { font-weight:700; text-align:center; padding:.2rem; }
+.calendar-cell { min-height:4.2rem; padding:.2rem; border:1px solid #e2e8f0; border-radius:4px; overflow:hidden; }
+.calendar-cell.out { opacity:.45; }
+.calendar-cell.today { border:2px solid var(--primary, #4f46e5); }
+.calendar-day { font-weight:700; }
+.calendar-event { display:block; width:100%; margin-top:2px; padding:1px 3px; text-align:left; font-size:.72rem; border:1px solid #cbd5e1; border-radius:4px; background:#fff; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pin-badge { display:inline-block; margin-left:.3rem; padding:.05rem .4rem; border:1px solid #cbd5e1; border-radius:999px; font-size:.7rem; font-weight:700; background:#fef9c3; vertical-align:middle; }
+#mfa-qr { background:#fff; border:1px solid #cbd5e1; }
+@media (max-width:640px) { .calendar-cell { min-height:3.2rem; } .calendar-event { font-size:.65rem; } }
+@media print { .banner, .skip-link { display:none !important; } }

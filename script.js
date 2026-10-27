@@ -36,6 +36,11 @@ import { sha256Hex, findDuplicates } from "./modules/duplicates.mjs";
 import { sanitizeSaved, addSaved, removeSaved } from "./modules/savedSearches.mjs";
 import { RECURRENCES, recurrenceFor, nextOccurrence, buildNextItem } from "./modules/recurrence.mjs";
 import { indexForDate, centerScroll, currentIndex, stepTarget } from "./modules/timeline-nav.mjs";
+import { calendarEvents, monthGrid, shiftMonth } from "./modules/calendar.mjs";
+import { deadlineStatus, STATUS_LABELS, reminderSummary, reminderMessage, backupReminder } from "./modules/reminders.mjs";
+import { toCsv, ITEM_COLUMNS, ACTIVITY_COLUMNS } from "./modules/csv.mjs";
+import { isPinned, withPinnedFirst } from "./modules/pins.mjs";
+import { cleanTotpCode, validateTotpCode, needsMfaChallenge, verifiedTotpFactor } from "./modules/mfa.mjs";
 import { auditItems } from "./modules/schema.mjs";
 import { cleanBulkText, addTag, bulkSummary } from "./modules/bulk.mjs";
 import { FEEDBACK_TYPES, validateFeedback } from "./modules/feedback.mjs";
@@ -231,6 +236,7 @@ function setAuthenticatedUi(user, profile = null) {
     if (currentUser?.id !== user?.id) {
         selectionMode = false;
         selectedDocumentIds.clear();
+        healthChecked = false; backupNotice = ""; bannerDismissed = false; noteLoadedFor = ""; guideChecked = false;
         personalPreferences = loadPersonalPreferences(user?.id);
         timelineAnchor = parseLocalDate(personalPreferences.timelineAnchor) || new Date();
         applyAppearance();
@@ -245,6 +251,7 @@ function setAuthenticatedUi(user, profile = null) {
     $("btn-sign-out").classList.toggle("hidden", !user);
     $("auth-modal").classList.toggle("hidden", Boolean(user));
     applyRoleUi();
+    updateReminders();
 }
 
 function requireAdmin() {
@@ -333,6 +340,8 @@ async function startFirestoreSession(session) {
             renderSavedSearches();
             updateSharingSummary();
             maybeShowGuide();
+            updateReminders();
+            if (isAdmin() && !healthChecked) { healthChecked = true; refreshHealth(); }
         },
         (error) => { console.error("Écoute Firestore interrompue :", error?.code, error); recoverFirestoreListener(error); });
     await refreshStorageUsage();
@@ -344,6 +353,7 @@ function updateReadDoneButton() {
     const button = $("read-done");
     const visible = Boolean(readModalItem) && readModalItem.type === "deadline" && isAdmin();
     button.classList.toggle("hidden", !visible);
+    updateReadExtras();
     if (visible) button.textContent = isDone(readModalItem) ? `Terminée le ${dateLabel(readModalItem.doneAt || "")} — rouvrir` : "Marquer comme terminée";
 }
 $("read-done").addEventListener("click", async () => {
@@ -619,6 +629,227 @@ $("tl-go").addEventListener("click", () => {
 $("tl-all").addEventListener("click", () => { resetFilters(); render(); setStatus("Tous les éléments sont affichés."); });
 $("timeline-list").addEventListener("change", () => updateTimelineView({ list: $("timeline-list").checked }));
 
+
+// --- Export CSV des fiches affichées (filtres et recherche en cours) ---
+$("export-csv").addEventListener("click", () => {
+    const rows = filteredItems();
+    if (!rows.length) { $("settings-status").textContent = "Aucune fiche à exporter."; return; }
+    downloadFile(`padlet-fiches-${localDateValue(new Date())}.csv`, toCsv(rows, ITEM_COLUMNS), "text/csv;charset=utf-8");
+    $("settings-status").textContent = `${rows.length} fiche(s) exportée(s) (CSV, séparateur « ; »).`;
+});
+
+// --- Fiche : statut « en cours », épingler, note privée de l'administrateur (collection adminNotes, lisible par les administrateurs seulement) ---
+let noteLoadedFor = "";
+function updateReadExtras() {
+    const admin = isAdmin() && Boolean(readModalItem);
+    const progress = $("read-progress"), pin = $("read-pin"), note = $("read-admin-note");
+    const deadlineOpen = admin && readModalItem.type === "deadline" && !isDone(readModalItem);
+    progress.classList.toggle("hidden", !deadlineOpen);
+    if (deadlineOpen) progress.textContent = deadlineStatus(readModalItem) === "inprogress" ? "En cours — remettre à faire" : "Marquer en cours";
+    pin.classList.toggle("hidden", !admin);
+    if (admin) pin.textContent = isPinned(readModalItem) ? "Désépingler" : "Épingler en haut";
+    note.classList.toggle("hidden", !admin);
+    if (admin && noteLoadedFor !== readModalItem.id) {
+        noteLoadedFor = readModalItem.id; $("read-note-text").value = ""; $("read-note-status").textContent = "";
+        getDoc(doc(db, "adminNotes", readModalItem.id)).then((snap) => { if (noteLoadedFor === readModalItem?.id) $("read-note-text").value = snap.exists() ? snap.data().text || "" : ""; })
+            .catch((error) => { $("read-note-status").textContent = error?.code === "permission-denied" ? "Notes non activées (règles Firestore à publier)." : ""; });
+    }
+}
+$("read-progress").addEventListener("click", async () => {
+    const button = $("read-progress");
+    if (!readModalItem || readModalItem.type !== "deadline" || !requireAdmin() || button.disabled) return;
+    const resume = deadlineStatus(readModalItem) === "inprogress", id = readModalItem.id;
+    button.disabled = true;
+    try {
+        await refreshAdminFirestoreSession();
+        await mergeItem(id, { status: resume ? deleteField() : "inprogress" });
+        readModalItem = { ...readModalItem, status: resume ? undefined : "inprogress" };
+        updateReadExtras();
+        await logActivity({ action: resume ? "deadline.todo" : "deadline.progress", resourceType: "deadline", resourceId: id, label: readModalItem.title });
+        setStatus(resume ? "Échéance remise « à faire »." : "Échéance marquée « en cours ».");
+    } catch (error) { console.error(error); setStatus("Impossible de modifier le statut. Réessayez.", true); }
+    finally { button.disabled = false; }
+});
+$("read-pin").addEventListener("click", async () => {
+    const button = $("read-pin");
+    if (!readModalItem || !requireAdmin() || button.disabled) return;
+    const unpin = isPinned(readModalItem), id = readModalItem.id;
+    button.disabled = true;
+    try {
+        await refreshAdminFirestoreSession();
+        await mergeItem(id, { pinned: unpin ? deleteField() : true });
+        readModalItem = { ...readModalItem, pinned: unpin ? undefined : true };
+        updateReadExtras();
+        await logActivity({ action: unpin ? "document.unpin" : "document.pin", resourceType: "document", resourceId: id, label: readModalItem.title });
+        setStatus(unpin ? "Fiche désépinglée." : "Fiche épinglée en haut de la liste.");
+    } catch (error) { console.error(error); setStatus("Impossible de modifier l’épinglage. Réessayez.", true); }
+    finally { button.disabled = false; }
+});
+$("read-note-save").addEventListener("click", async () => {
+    if (!readModalItem || !requireAdmin()) return;
+    const status = $("read-note-status"), button = $("read-note-save"), text = $("read-note-text").value.trim().slice(0, 2000);
+    button.disabled = true; status.textContent = "";
+    try {
+        await refreshAdminFirestoreSession();
+        if (text) await setDoc(doc(db, "adminNotes", readModalItem.id), { text, updatedAt: serverTimestamp(), updatedBy: currentUser.id });
+        else await deleteDoc(doc(db, "adminNotes", readModalItem.id)).catch(() => {});
+        status.textContent = text ? "Note enregistrée." : "Note supprimée.";
+    } catch (error) { console.error(error); status.textContent = error?.code === "permission-denied" ? "Notes non activées (règles Firestore à publier)." : "Enregistrement impossible."; }
+    finally { button.disabled = false; }
+});
+
+// --- Calendrier mensuel (tableau de bord) : échéances non terminées + expirations ---
+const todayParts = () => { const [year, month] = localDateValue(new Date()).split("-").map(Number); return { year, month }; };
+let calendarMonth = todayParts();
+function renderCalendar() {
+    const grid = $("calendar-grid"), today = localDateValue(new Date());
+    const model = monthGrid(calendarMonth.year, calendarMonth.month, calendarEvents(items), today);
+    $("cal-label").textContent = model.label;
+    const cells = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"].map((name) => { const head = document.createElement("div"); head.className = "calendar-head"; head.setAttribute("role", "columnheader"); head.textContent = name; return head; });
+    model.weeks.flat().forEach((cell) => {
+        const box = document.createElement("div"); box.className = `calendar-cell${cell.inMonth ? "" : " out"}${cell.today ? " today" : ""}`; box.setAttribute("role", "cell");
+        const day = document.createElement("span"); day.className = "calendar-day"; day.textContent = String(cell.day); box.append(day);
+        cell.events.forEach((event) => {
+            const button = document.createElement("button"); button.type = "button"; button.className = "calendar-event";
+            const prefix = event.kind === "expiry" ? "Expiration : " : event.inProgress ? "En cours : " : "Échéance : ";
+            button.textContent = `${prefix}${event.title}`; button.title = `${dateLabel(event.date)} — ${prefix}${event.title}`;
+            button.addEventListener("click", () => { const item = items.find((entry) => entry.id === event.id); if (item) openReadModal(item); });
+            box.append(button);
+        });
+        cells.push(box);
+    });
+    grid.replaceChildren(...cells);
+}
+$("cal-prev").addEventListener("click", () => { calendarMonth = shiftMonth(calendarMonth.year, calendarMonth.month, -1); renderCalendar(); });
+$("cal-next").addEventListener("click", () => { calendarMonth = shiftMonth(calendarMonth.year, calendarMonth.month, 1); renderCalendar(); });
+$("cal-today").addEventListener("click", () => { calendarMonth = todayParts(); renderCalendar(); });
+
+// --- Bandeau de rappel (échéances proches ou dépassées, sauvegarde) et état de la connexion ---
+let bannerDismissed = false, backupNotice = "";
+function updateReminders() {
+    const banner = $("reminder-banner");
+    const message = [reminderMessage(reminderSummary(items, localDateValue(new Date()))), isAdmin() ? backupNotice : ""].filter(Boolean).join(" · ");
+    if (!currentUser || !message || bannerDismissed) { banner.classList.add("hidden"); banner.replaceChildren(); return; }
+    const text = document.createElement("span"); text.textContent = `⚠ ${message}`;
+    const open = document.createElement("button"); open.type = "button"; open.textContent = "Voir le tableau de bord"; open.addEventListener("click", () => setView("dashboard"));
+    const hide = document.createElement("button"); hide.type = "button"; hide.textContent = "Masquer"; hide.addEventListener("click", () => { bannerDismissed = true; updateReminders(); });
+    banner.replaceChildren(text, open, hide); banner.classList.remove("hidden");
+}
+function updateOnlineBanner() { $("offline-banner").classList.toggle("hidden", navigator.onLine !== false); }
+window.addEventListener("online", updateOnlineBanner); window.addEventListener("offline", updateOnlineBanner); updateOnlineBanner();
+
+// --- Santé du site (administrateur) : dernière sauvegarde, dernière purge, PDF, partage, conformité des fiches ---
+async function refreshHealth() {
+    if (!isAdmin()) return;
+    const list = $("health-list"), button = $("health-refresh");
+    button.disabled = true;
+    const lines = [];
+    try {
+        await refreshAdminFirestoreSession();
+        const backups = await getDocs(query(collection(db, "activityLog"), where("action", "==", "backup.create"), limit(30)));
+        const times = backups.docs.map((entry) => entry.data()).filter((e) => e.result !== "failure" && e.at?.toMillis).map((e) => e.at.toMillis());
+        const last = times.length ? Math.max(...times) : null;
+        lines.push(`Dernière sauvegarde : ${last ? new Date(last).toLocaleString("fr-FR") : "aucune enregistrée au journal"}.`);
+        backupNotice = backupReminder(last, Date.now());
+    } catch (error) { lines.push("Dernière sauvegarde : lecture du journal impossible (règles Firestore à publier ?)."); }
+    try {
+        const purge = await getDoc(doc(db, "system", "lastPurge"));
+        const p = purge.exists() ? purge.data() : null;
+        lines.push(p ? `Dernière purge planifiée : ${p.ranAt?.toDate ? p.ranAt.toDate().toLocaleString("fr-FR") : "date inconnue"} (${p.deleted} supprimé(s)).` : "Dernière purge planifiée : aucune trace.");
+    } catch (error) { lines.push("Dernière purge : lecture impossible."); }
+    const pdf = pdfIndexSummary(items.filter(isPdfItem)), sharing = sharingMigrationPlan(items, trashItems), audit = auditItems([...items, ...trashItems]);
+    lines.push(`PDF : ${pdf.total} · à indexer : ${pdf.todo}.`);
+    lines.push(`Partage : ${sharing.counts.alreadyShared} partagée(s), ${sharing.counts.alreadyPrivate} non partagée(s), ${sharing.writes.length} à préparer. Filtre utilisateurs : ${SHARING_ENFORCED ? "actif" : "pas encore activé"}.`);
+    lines.push(`Fiches : ${audit.counts.total} contrôlées, ${audit.counts.ruleProblems} avec un problème de règles, ${audit.counts.unknown} avec un champ inconnu.`);
+    list.replaceChildren(...lines.map((text) => { const p = document.createElement("p"); p.textContent = text; return p; }));
+    updateReminders();
+    button.disabled = false;
+}
+$("health-refresh").addEventListener("click", refreshHealth);
+let healthChecked = false;
+
+// --- Raccourcis clavier (hors champs de saisie) : / rechercher · ? guide · n ajouter (admin) · 1 2 3 changer de vue ---
+document.addEventListener("keydown", (event) => {
+    if (event.ctrlKey || event.metaKey || event.altKey || !currentUser) return;
+    const target = event.target;
+    if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+    if (document.querySelector(".modal:not(.hidden)")) return;
+    if (event.key === "/") { event.preventDefault(); setView("themes"); searchInput.focus(); }
+    else if (event.key === "?") { event.preventDefault(); openGuide(); }
+    else if (event.key === "n" && isAdmin()) { event.preventDefault(); $("btn-add").click(); }
+    else if (event.key === "1") btnTheme.click();
+    else if (event.key === "2") btnTimeline.click();
+    else if (event.key === "3") btnDashboard.click();
+});
+
+// --- Authentification à deux étapes (code d'une application d'authentification, protocole TOTP de Supabase Auth) ---
+function askMfaCode(factorId) {
+    return new Promise((resolve) => {
+        const modal = $("mfa-modal"), input = $("mfa-login-code"), status = $("mfa-login-status"), verify = $("mfa-login-verify"), cancel = $("mfa-login-cancel");
+        input.value = ""; status.textContent = ""; modal.classList.remove("hidden"); input.focus();
+        const finish = (ok) => { modal.classList.add("hidden"); verify.onclick = null; cancel.onclick = null; resolve(ok); };
+        cancel.onclick = () => finish(false);
+        verify.onclick = async () => {
+            const problem = validateTotpCode(input.value);
+            if (problem) { status.textContent = problem; return; }
+            verify.disabled = true;
+            try {
+                const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId });
+                if (challengeError) throw challengeError;
+                const { error } = await supabase.auth.mfa.verify({ factorId, challengeId: challenge.id, code: cleanTotpCode(input.value) });
+                if (error) throw error;
+                finish(true);
+            } catch (error) { status.textContent = "Code incorrect ou expiré. Réessayez."; }
+            finally { verify.disabled = false; }
+        };
+    });
+}
+let pendingMfaFactor = "";
+async function refreshMfaStatus() {
+    if (!supabase || !currentUser) return;
+    try {
+        const { data } = await supabase.auth.mfa.listFactors();
+        const active = verifiedTotpFactor(data);
+        $("mfa-status").textContent = active ? "Activée : un code est demandé à chaque connexion." : "Désactivée : seul le mot de passe est demandé.";
+        $("mfa-enroll").classList.toggle("hidden", Boolean(active)); $("mfa-disable").classList.toggle("hidden", !active);
+    } catch (error) { $("mfa-status").textContent = "État indisponible (authentification à deux étapes non activée dans Supabase ?)."; }
+}
+$("btn-settings").addEventListener("click", refreshMfaStatus);
+$("mfa-enroll").addEventListener("click", async () => {
+    const status = $("mfa-status");
+    try {
+        const { data: existing } = await supabase.auth.mfa.listFactors();
+        for (const factor of existing?.all || []) if (factor.status === "unverified") await supabase.auth.mfa.unenroll({ factorId: factor.id });
+        const { data, error } = await supabase.auth.mfa.enroll({ factorType: "totp", friendlyName: `Padlet ${new Date().toISOString()}` });
+        if (error) throw error;
+        pendingMfaFactor = data.id; $("mfa-qr").src = data.totp.qr_code; $("mfa-secret").textContent = data.totp.secret; $("mfa-code").value = "";
+        $("mfa-enroll-area").classList.remove("hidden"); $("mfa-code").focus();
+    } catch (error) { console.error(error); status.textContent = "Activation impossible (authentification à deux étapes non activée dans Supabase ?)."; }
+});
+$("mfa-confirm").addEventListener("click", async () => {
+    const status = $("mfa-status"), problem = validateTotpCode($("mfa-code").value);
+    if (problem) { status.textContent = problem; return; }
+    try {
+        const { data: challenge, error: challengeError } = await supabase.auth.mfa.challenge({ factorId: pendingMfaFactor });
+        if (challengeError) throw challengeError;
+        const { error } = await supabase.auth.mfa.verify({ factorId: pendingMfaFactor, challengeId: challenge.id, code: cleanTotpCode($("mfa-code").value) });
+        if (error) throw error;
+        $("mfa-enroll-area").classList.add("hidden"); pendingMfaFactor = "";
+        await refreshMfaStatus();
+        await logActivity({ action: "account.mfa-enable", resourceType: "account", resourceId: currentUser.id });
+    } catch (error) { status.textContent = "Code incorrect ou expiré. Réessayez."; }
+});
+$("mfa-disable").addEventListener("click", async () => {
+    if (!window.confirm("Désactiver l’authentification à deux étapes ? Seul le mot de passe sera demandé.")) return;
+    try {
+        const { data } = await supabase.auth.mfa.listFactors();
+        const active = verifiedTotpFactor(data);
+        if (active) { const { error } = await supabase.auth.mfa.unenroll({ factorId: active.id }); if (error) throw error; }
+        await refreshMfaStatus();
+        await logActivity({ action: "account.mfa-disable", resourceType: "account", resourceId: currentUser.id });
+    } catch (error) { console.error(error); $("mfa-status").textContent = "Désactivation impossible : reconnectez-vous puis réessayez."; }
+});
+
 // --- Lien direct vers une fiche : #fiche=<id>. Seules les fiches actives déjà autorisées par Firestore sont ouvertes
 // (une fiche en corbeille ou inexistante affiche « introuvable ») ; aucun contenu n'est exposé par l'URL elle-même.
 let handledHashId = "";
@@ -699,6 +930,11 @@ $("auth-form").addEventListener("submit", async (event) => {
     try {
         const { data, error } = await authGateway.signInWithUsername(username, password);
         if (error) throw error;
+        const level = (await supabase.auth.mfa.getAuthenticatorAssuranceLevel()).data;
+        if (needsMfaChallenge(level)) {
+            const factor = verifiedTotpFactor((await supabase.auth.mfa.listFactors()).data);
+            if (factor && !(await askMfaCode(factor.id))) { await supabase.auth.signOut(); $("auth-error").textContent = "Connexion annulée : le code de vérification est requis."; return; }
+        }
         setAuthenticatedUi(data.user, await authGateway.loadProfile(data.user));
         const { data: { session } } = await supabase.auth.getSession();
         await startFirestoreSession(session);
@@ -1236,6 +1472,8 @@ function renderDashboardList(container, entries, emptyMessage, detail, onOpen) {
     container.append(list);
 }
 function renderDashboard() {
+    renderCalendar();
+    $("health-panel").classList.toggle("hidden", !isAdmin());
     const documents = documentItems();
     const used = Number.isFinite(storageUsedBytes) ? storageUsedBytes : null;
     const remaining = used === null ? null : Math.max(0, STORAGE_LIMIT_BYTES - used);
@@ -1283,7 +1521,7 @@ function sortDocuments(documents) {
         "title-asc": byTitle,
         "title-desc": (a, b) => byTitle(b, a)
     };
-    return [...documents].sort(comparators[sortControl.value] || comparators["date-desc"]);
+    return withPinnedFirst([...documents].sort(comparators[sortControl.value] || comparators["date-desc"]));
 }
 
 function timelineDate(item) { return item.timelineDate || item.date; }
@@ -1307,6 +1545,7 @@ function createDocumentCard(item) {
     card.tabIndex = 0;
     const header = document.createElement("div"); header.className = "doc-card-header";
     const title = document.createElement("h4"); title.textContent = item.title || "Sans titre";
+    if (isPinned(item)) { const pin = document.createElement("span"); pin.className = "pin-badge"; pin.textContent = "Épinglé"; title.append(" ", pin); }
     if (isAdmin() && item.shared === false) { const lock = document.createElement("span"); lock.className = "share-badge"; lock.textContent = "Non partagé"; title.append(" ", lock); }
     highlightSearchTerms(title);
     const favorite = document.createElement("button"); favorite.type = "button"; favorite.className = `favorite-button${isFavorite(item) ? " is-favorite" : ""}`;
@@ -1464,7 +1703,7 @@ function timelineViewState() {
         try {
             const stored = JSON.parse(localStorage.getItem(`padlet-timeline-view:${userId}`) || "{}");
             if ([25, 50, 75, 100, 125].includes(stored.zoom)) state.zoom = stored.zoom;
-            if (["none", "month", "theocratic"].includes(stored.grouping)) state.grouping = stored.grouping;
+            if (["none", "month", "year", "theocratic"].includes(stored.grouping)) state.grouping = stored.grouping;
             state.list = stored.list === true;
         } catch { /* préférences illisibles : valeurs par défaut */ }
     }
@@ -1514,7 +1753,16 @@ function renderTimeline() {
             heading.style.gridColumn = `${group.start + 1} / span ${group.count}`; heading.style.gridRow = "4"; track.append(heading);
         });
         const legend = document.createElement("ul"); legend.className = "tl-legend"; legend.setAttribute("aria-label", "Légende des couleurs");
-        colors.forEach((color, label) => { const li = document.createElement("li"); li.style.setProperty("--c", color); li.textContent = label; legend.append(li); });
+        colors.forEach((color, label) => {
+            const li = document.createElement("li"); li.style.setProperty("--c", color); li.textContent = label;
+            const option = [...themeFilter.options].find((entry) => entry.value && entry.textContent === label);
+            if (option) {
+                li.tabIndex = 0; li.setAttribute("role", "button"); li.title = `Filtrer sur le thème « ${label} »`; li.style.cursor = "pointer";
+                const apply = () => { themeFilter.value = option.value; render(); setStatus(`Filtre appliqué : thème « ${label} ». « Tout afficher » le retire.`); };
+                li.addEventListener("click", apply); li.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); apply(); } });
+            }
+            legend.append(li);
+        });
         timelineContainer.append(track, legend);
         const today = localDateValue(new Date());
         let next = dated.findIndex((item) => timelineDate(item) >= today);
@@ -1581,6 +1829,7 @@ function openForm(item = null) {
     $("existing-file-name").value = item?.fileName || "";
     $("existing-file-type").value = item?.fileType || "";
     document.querySelector(`input[name="item-type"][value="${item?.type || "document"}"]`).checked = true;
+    $("doc-pinned").checked = item?.pinned === true;
     $("doc-shared").checked = item ? effectivelyShared(item) : false;   // nouvelle fiche : non partagée par défaut ; ancienne fiche : état actuel (visible)
     $("doc-title").value = item?.title || ""; $("doc-date").value = item?.date || "";
     $("doc-theme").value = item?.theme || ""; $("doc-tags").value = item?.tags || ""; $("doc-collections").value = item?.collections || "";
@@ -1674,6 +1923,7 @@ docForm.addEventListener("submit", async (event) => {
         if (type === "document" && item.expiresAt && item.expiresAt < new Date().toISOString().slice(0, 10) && !window.confirm("L’échéance de ce document est déjà passée : il sera supprimé à la prochaine purge automatique. Enregistrer quand même ?")) throw new Error("Enregistrement annulé : modifiez la date du document ou la durée de conservation.");
         const wasNew = !items.some((entry) => entry.id === id), previousPath = items.find((entry) => entry.id === id)?.filePath;
         item.shared = $("doc-shared").checked;
+        item.pinned = $("doc-pinned").checked ? true : deleteField();
         await mergeItem(id, item);
         await logActivity({ action: wasNew ? "document.create" : "document.update", resourceType: type, resourceId: id, label: item.title });
         if (item.filePath && item.filePath !== previousPath) {
@@ -2346,6 +2596,37 @@ async function logActivity(event) {
         await addDoc(collection(db, "activityLog"), { ...buildActivityEvent(event, currentUser.id), at: serverTimestamp(), expireAt: Timestamp.fromDate(new Date(Date.now() + ACTIVITY_RETENTION_DAYS * 86400000)) });
     } catch (error) { console.warn("Journal d’activité indisponible (règles Firestore non publiées ?).", error?.code || error); }
 }
+let activityEntries = [];
+function filteredActivity() {
+    const needle = normalizeSearchText($("activity-filter").value).trim();
+    return needle ? activityEntries.filter((e) => normalizeSearchText(`${e.action} ${e.label || ""} ${e.resourceId || ""} ${e.resourceType || ""} ${e.result || ""}`).includes(needle)) : activityEntries;
+}
+function renderActivity() {
+    const list = $("activity-list"), entries = filteredActivity();
+    list.replaceChildren();
+    if (!entries.length) { list.append(createEmpty(activityEntries.length ? "Aucun événement ne correspond au filtre." : "Aucun événement enregistré.")); return; }
+    entries.forEach((e) => {
+        const row = document.createElement("div"); row.className = "dashboard-list-item";
+        const title = document.createElement("strong"); title.textContent = `${e.action}${e.result === "failure" ? " (échec)" : ""}`;
+        const info = document.createElement("small");
+        info.textContent = `${e.atText || "?"} · ${e.label || e.resourceId || e.resourceType}${Number.isInteger(e.count) ? ` · ${e.count}` : ""} · par ${String(e.userId).slice(0, 8)}${e.source === "server" ? " · enregistré par le serveur" : ""}`;
+        row.append(title, info); list.append(row);
+    });
+}
+function downloadFile(name, content, type) {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([content], { type })); link.download = name;
+    document.body.append(link); link.click(); link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+}
+$("activity-filter").addEventListener("input", renderActivity);
+$("activity-export").addEventListener("click", () => {
+    if (!requireAdmin()) return;
+    const entries = filteredActivity();
+    if (!entries.length) { setStatus("Chargez d’abord le journal : rien à exporter.", true); return; }
+    downloadFile(`padlet-journal-${localDateValue(new Date())}.csv`, toCsv(entries, ACTIVITY_COLUMNS), "text/csv;charset=utf-8");
+    setStatus(`${entries.length} événement(s) exporté(s).`);
+});
 $("activity-load").addEventListener("click", async () => {
     if (!requireAdmin()) return;
     const list = $("activity-list"), purge = $("purge-status"), button = $("activity-load");
@@ -2353,15 +2634,8 @@ $("activity-load").addEventListener("click", async () => {
     try {
         await refreshAdminFirestoreSession();
         const snapshot = await getDocs(query(collection(db, "activityLog"), orderBy("at", "desc"), limit(50)));
-        list.replaceChildren();
-        if (snapshot.empty) list.append(createEmpty("Aucun événement enregistré."));
-        snapshot.docs.forEach((entry) => {
-            const e = entry.data(), row = document.createElement("div"); row.className = "dashboard-list-item";
-            const when = e.at?.toDate ? e.at.toDate().toLocaleString("fr-FR") : "…";
-            const title = document.createElement("strong"); title.textContent = `${e.action}${e.result === "failure" ? " (échec)" : ""}`;
-            const info = document.createElement("small"); info.textContent = `${when} · ${e.label || e.resourceId || e.resourceType}${Number.isInteger(e.count) ? ` · ${e.count}` : ""} · par ${String(e.userId).slice(0, 8)}${e.source === "server" ? " · enregistré par le serveur" : ""}`;
-            row.append(title, info); list.append(row);
-        });
+        activityEntries = snapshot.docs.map((entry) => { const data = entry.data(); return { ...data, atText: data.at?.toDate ? data.at.toDate().toLocaleString("fr-FR") : "" }; });
+        renderActivity();
         const status = await getDoc(doc(db, "system", "lastPurge")).catch(() => null);
         const p = status?.exists() ? status.data() : null;
         purge.textContent = p ? `Dernière purge planifiée : ${p.ranAt?.toDate ? p.ranAt.toDate().toLocaleString("fr-FR") : "date inconnue"} · ${p.deleted} supprimé(s) · ${p.skippedInconsistent} ignoré(s) pour échéance incohérente · ${p.failureCount} erreur(s) technique(s).` : "Aucun état de purge enregistré pour l’instant.";

@@ -2,6 +2,31 @@
 
 Les versions sont numérotées à partir de 0.7.0 (première version numérotée ; le numéro vit dans `package.json` et `modules/version.mjs`, un test vérifie qu'ils sont identiques). Les phases 1 à 6 précédentes ne portaient pas de numéro.
 
+## 1.0.0-rc.1 — Version candidate 1.0.0
+
+Toutes les fonctions listées ci-dessous sont dans le code et leurs calculs sont testés ; **l'interface n'a pas été vue dans un navigateur**. Passage en 1.0.0 : docs/RELEASE-1.0.0.md.
+
+### Nouveautés
+- **Authentification à deux étapes** (code à 6 chiffres) : activation dans Paramètres, code demandé à la connexion ; exigence côté serveur pour les administrateurs possible avec `REQUIRE_MFA_FOR_ADMIN` (désactivée par défaut). Voir docs/MFA.md.
+- **CORS limitable** (`ALLOWED_ORIGINS`) dans `admin-users` et `firebase-custom-token` ; sans le secret, comportement inchangé.
+- **Calendrier mensuel** des échéances et expirations (tableau de bord).
+- **Bandeau de rappel** (échéances dépassées ou proches, expirations, rappel de sauvegarde pour l'administrateur) et **bandeau hors connexion**.
+- **Statut « en cours »** des échéances ; **épingler** des fiches en haut de la liste ; **note privée** d'administrateur par fiche (collection `adminNotes`, règles à republier).
+- **Santé du site** (administrateur) : dernière sauvegarde, dernière purge, PDF à indexer, partage, conformité des fiches.
+- **Export CSV** des fiches affichées (protégé contre l'injection de formule) ; **journal** filtrable et exportable en CSV.
+- **Frise** : regroupement par année civile, légende cliquable (filtre par thème).
+- **Raccourcis clavier** (`/` rechercher, `?` guide, `n` ajouter, `1` `2` `3` vues) et lien « Aller au contenu ».
+- **Application installable** (manifeste et icônes ; pas de mode hors ligne, aucun document privé conservé sur l'appareil).
+- **CI et outils** : Dependabot (actions GitHub), workflows manuels Lighthouse et test de fumée navigateur (écrits, jamais exécutés).
+- Déjà présents et non refaits : vue liste/grille de la bibliothèque, vue liste de la frise, suppression automatique du journal (à activer), contrôle des secrets.
+
+### Documentation
+- `docs/RELEASE-1.0.0.md` (check-list et fonctions reportées avec leurs raisons), `docs/MFA.md`, `docs/SECRETS-ET-ROTATION.md`, `docs/SAUVEGARDE-PLANIFIEE.md`, `docs/NOTIFICATIONS-EMAIL.md`.
+
+### À savoir
+- `firestore.rules.partage` contient un nouveau bloc `adminNotes` : à republier. Les fonctions `admin-users` et `firebase-custom-token` changent : à redéployer.
+- 89 tests.
+
 ## 0.13.0 — Navigation dans la frise et vue liste
 
 ### Nouveautés (module testé ; interface **non vérifiée dans un navigateur**)

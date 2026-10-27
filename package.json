@@ -1,6 +1,6 @@
 {
   "name": "padlet",
-  "version": "0.13.0",
+  "version": "1.0.0-rc.1",
   "private": true,
   "scripts": {
     "check": "node scripts/check-syntax.mjs && node scripts/check-imports.mjs && node scripts/check-secrets.mjs",

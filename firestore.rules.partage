@@ -1,5 +1,5 @@
 // VERSION CIBLE « PARTAGE PAR DOCUMENT » — NE PAS PUBLIER avant l'étape 5 de docs/PARTAGE.md.
-// Identique à firestore.rules sauf : lecture de padletItems limitée aux fiches `shared == true` (hors administrateurs), champ `shared` booléen, et collection `feedback` (avis).
+// Identique à firestore.rules sauf : lecture de padletItems limitée aux fiches `shared == true` (hors administrateurs), champ `shared` booléen, collections `feedback` (avis) et `adminNotes` (notes privées).
 rules_version = '2';
 
 service cloud.firestore {
@@ -51,6 +51,17 @@ service cloud.firestore {
         && request.resource.data.expireAt > request.time
         && request.resource.data.expireAt < request.time + duration.value(400, 'd');
       allow update, delete: if false;
+    }
+
+    // Notes privées des administrateurs sur une fiche (identifiant = celui de la fiche) : jamais lisibles par les utilisateurs.
+    match /adminNotes/{noteId} {
+      allow read, delete: if request.auth != null && request.auth.token.role == 'admin';
+      allow create, update: if request.auth != null
+        && request.auth.token.role == 'admin'
+        && request.resource.data.keys().hasOnly(['text', 'updatedAt', 'updatedBy'])
+        && request.resource.data.text is string && request.resource.data.text.size() <= 2000
+        && request.resource.data.updatedBy == request.auth.uid
+        && request.resource.data.updatedAt == request.time;
     }
 
     // Avis des utilisateurs : tout compte connecté peut en envoyer (à son nom, heure du serveur, tailles limitées) ;

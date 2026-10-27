@@ -6,6 +6,8 @@
     <title>Mon Mur de Documents – Padlet</title>
     <meta name="description" content="Padlet : centralisez, recherchez et organisez vos documents autour d’une frise chronologique.">
     <meta name="theme-color" content="#4f46e5">
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%234f46e5'/%3E%3Cpath d='M18 18h28v6H18zm0 12h28v6H18zm0 12h18v6H18z' fill='white'/%3E%3C/svg%3E">
     <link rel="stylesheet" href="style.css">
 </head>
@@ -24,6 +26,7 @@
             }
         } catch { document.body.dataset.theme = "system"; }
     </script>
+    <a class="skip-link" href="#main-content">Aller au contenu</a>
     <header>
         <div>
             <p class="eyebrow">ESPACE DE VEILLE</p>
@@ -49,7 +52,9 @@
         </nav>
     </header>
 
-    <main>
+    <div id="reminder-banner" class="banner hidden" role="status"></div>
+    <div id="offline-banner" class="banner banner-warning hidden" role="alert">Vous êtes hors connexion : les modifications ne seront pas enregistrées tant que la connexion n’est pas revenue.</div>
+    <main id="main-content" tabindex="-1">
         <section class="board-tools" aria-label="Recherche et stockage">
             <div class="document-controls" aria-label="Recherche, filtres et tri">
                 <label class="search-control" for="document-search">
@@ -130,7 +135,7 @@
         <section id="view-timeline" class="view hidden" aria-label="Frise chronologique">
             <div class="timeline-toolbar" aria-label="Affichage de la frise">
                 <label>Zoom <select id="timeline-zoom"><option value="25">25 %</option><option value="50">50 %</option><option value="75">75 %</option><option value="100" selected>100 %</option><option value="125">125 %</option></select></label>
-                <label>Regrouper par <select id="timeline-grouping"><option value="none">Aucun regroupement</option><option value="month">Mois</option><option value="theocratic">Année théocratique</option></select></label>
+                <label>Regrouper par <select id="timeline-grouping"><option value="none">Aucun regroupement</option><option value="month">Mois</option><option value="year">Année civile</option><option value="theocratic">Année théocratique</option></select></label>
                 <label class="inline-check"><input type="checkbox" id="timeline-list"> Vue liste (accessible)</label>
             </div>
             <div class="timeline-nav" role="group" aria-label="Navigation dans la frise">
@@ -178,6 +183,17 @@
                 <p id="sharing-summary" role="status" aria-live="polite"></p>
                 <div class="form-actions"><button id="sharing-simulate" type="button">Simuler la préparation du partage</button><button id="sharing-apply" type="button" disabled>Appliquer la préparation</button></div>
                 <p id="sharing-status" role="status" aria-live="polite"></p>
+                <h3>Authentification à deux étapes</h3>
+                <p id="mfa-status" role="status" aria-live="polite">Non vérifiée.</p>
+                <div class="form-actions"><button id="mfa-enroll" type="button">Activer</button><button id="mfa-disable" type="button" class="hidden">Désactiver</button></div>
+                <div id="mfa-enroll-area" class="hidden">
+                    <p>1. Scannez ce code avec une application d’authentification (Google Authenticator, Authy, Microsoft Authenticator…).</p>
+                    <img id="mfa-qr" alt="Code QR à scanner avec l’application d’authentification" width="180" height="180">
+                    <p>Ou saisissez cette clé : <code id="mfa-secret"></code></p>
+                    <p>2. Saisissez le code à 6 chiffres affiché :</p>
+                    <input id="mfa-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" aria-label="Code à 6 chiffres">
+                    <button id="mfa-confirm" type="button">Valider</button>
+                </div>
                 <h3>Contrôle des fiches</h3>
                 <div class="form-actions"><button id="items-audit-run" type="button">Contrôler les fiches (lecture seule)</button></div>
                 <div id="items-audit-result" role="status" aria-live="polite"></div>
@@ -187,6 +203,8 @@
                 <h3>Journal d’activité</h3>
                 <p>Événements administratifs conservés 12 mois. Les règles Firestore interdisent toute modification ou suppression depuis l’application.</p>
                 <button id="activity-load" type="button">Afficher les 50 derniers événements</button>
+                <label>Filtrer <input id="activity-filter" type="search" placeholder="action, élément…" aria-label="Filtrer le journal"></label>
+                <button id="activity-export" type="button">Exporter le journal (CSV)</button>
                 <p id="purge-status"></p>
                 <div id="activity-list" role="status" aria-live="polite"></div>
                 <h3>Corbeille</h3>
@@ -206,6 +224,7 @@
                 <h3 id="general-settings-title">Général</h3>
                 <button id="reset-preferences" type="button">Réinitialiser mes préférences</button>
                 <button id="export-calendar" type="button">Exporter les échéances (.ics)</button>
+                <button id="export-csv" type="button">Exporter les fiches affichées (CSV)</button>
                 <button id="btn-change-password" type="button">Changer mon mot de passe</button>
                 <p class="settings-note">Le fichier .ics est un export ponctuel à importer dans votre agenda : il ne se synchronise pas automatiquement.</p>
                 <p id="app-version" class="settings-note"></p>
@@ -221,6 +240,16 @@
                 <article class="dashboard-panel"><h2>Échéances dépassées (30 jours)</h2><div id="dashboard-overdue"></div></article>
                 <article class="dashboard-panel"><h2>Documents par thème</h2><div id="dashboard-themes"></div></article>
                 <article class="dashboard-panel"><h2>Fichiers les plus volumineux</h2><div id="dashboard-largest"></div></article>
+                <article class="dashboard-panel dashboard-wide" id="calendar-panel">
+                    <h2>Calendrier</h2>
+                    <div class="calendar-nav"><button id="cal-prev" type="button">Mois précédent</button><strong id="cal-label" aria-live="polite"></strong><button id="cal-today" type="button">Aujourd’hui</button><button id="cal-next" type="button">Mois suivant</button></div>
+                    <div id="calendar-grid" class="calendar-grid" role="table" aria-label="Calendrier des échéances et expirations"></div>
+                </article>
+                <article class="dashboard-panel hidden" id="health-panel">
+                    <h2>Santé du site (administrateur)</h2>
+                    <div id="health-list"></div>
+                    <div class="form-actions"><button id="health-refresh" type="button">Actualiser</button></div>
+                </article>
                 <article class="dashboard-panel"><h2>Documents à compléter</h2><div id="dashboard-incomplete"></div></article>
             </div>
         </section>
@@ -255,6 +284,7 @@
                     <label><input type="radio" name="item-type" value="deadline"> Échéance</label>
                 </fieldset>
                 <label class="inline-check"><input type="checkbox" id="doc-shared"> Visible par les utilisateurs (sinon réservé aux administrateurs)</label>
+                <label class="inline-check"><input type="checkbox" id="doc-pinned"> Épingler en haut de la liste</label>
                 <label>Titre <input type="text" id="doc-title" placeholder="Ex. Compte-rendu de réunion" required></label>
                 <label><span id="doc-date-label">Date du document</span> <input type="date" id="doc-date" required></label>
                 <div id="document-fields">
@@ -298,6 +328,12 @@
                 <button id="read-favorite" class="favorite-button" type="button" aria-label="Ajouter aux favoris" title="Ajouter aux favoris">☆</button>
                 <button id="read-copy-link" class="link-button" type="button">Copier le lien</button>
                 <button id="read-done" class="link-button hidden" type="button"></button>
+                <button id="read-progress" class="link-button hidden" type="button"></button>
+                <button id="read-pin" class="link-button hidden" type="button"></button>
+                <div id="read-admin-note" class="hidden">
+                    <label>Note privée (visible des administrateurs seulement)<textarea id="read-note-text" rows="3" maxlength="2000"></textarea></label>
+                    <button id="read-note-save" type="button">Enregistrer la note</button> <span id="read-note-status" role="status"></span>
+                </div>
                 <div class="meta-info"><span id="read-date"></span><span id="read-theme-wrap"> · <span id="read-theme"></span></span><span id="read-expiration-wrap" class="hidden"> · <span id="read-expiration"></span></span></div>
                 <p id="read-expiration-warning" class="expiration-warning hidden" role="status"></p>
             </div>
@@ -363,6 +399,16 @@
             </form>
             <p id="admin-users-status" class="app-status" role="status"></p>
             <div id="admin-users-list" class="admin-users-list" aria-live="polite"></div>
+        </div>
+    </div>
+
+    <div id="mfa-modal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="mfa-title">
+        <div class="modal-content">
+            <h2 id="mfa-title">Vérification en deux étapes</h2>
+            <p>Saisissez le code à 6 chiffres de votre application d’authentification.</p>
+            <input id="mfa-login-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="7" aria-label="Code à 6 chiffres">
+            <p id="mfa-login-status" class="app-status" role="status" aria-live="polite"></p>
+            <div class="form-actions"><button id="mfa-login-cancel" type="button">Annuler</button><button id="mfa-login-verify" type="button" class="btn-primary">Vérifier</button></div>
         </div>
     </div>
 

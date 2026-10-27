@@ -6,13 +6,17 @@ const firebaseClientEmail = Deno.env.get("FIREBASE_CLIENT_EMAIL") ?? "";
 const firebasePrivateKey = (Deno.env.get("FIREBASE_PRIVATE_KEY") ?? "").replace(/\\n/g, "\n");
 
 const baseCors = {
-  "Access-Control-Allow-Headers": "authorization, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 };
 // --- CORS et MFA (début) : bloc identique dans admin-users et firebase-custom-token (vérifié par tests/phase7.test.mjs) ---
 // ALLOWED_ORIGINS (secret, adresses séparées par des virgules) limite les sites autorisés ; non défini = « * » (comportement d'avant).
 // REQUIRE_MFA_FOR_ADMIN = "true" exige un jeton Supabase de niveau aal2 (mot de passe + code) pour les administrateurs.
-const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") ?? "").split(",").map((origin) => origin.trim()).filter(Boolean);
+// Chaque entrée est ramenée à son « origine » (https://site.tld) : une barre finale ou un chemin (/Padlet/) saisis par erreur sont tolérés.
+function parseOrigins(raw: string) {
+  return raw.split(",").map((entry) => entry.trim()).filter(Boolean).map((entry) => { try { return new URL(entry).origin; } catch { return entry; } });
+}
+const allowedOrigins = parseOrigins(Deno.env.get("ALLOWED_ORIGINS") ?? "");
 const requireMfaForAdmin = Deno.env.get("REQUIRE_MFA_FOR_ADMIN") === "true";
 function corsHeadersFor(origin: string, allowed: string[], base: Record<string, string>) {
   if (allowed.length === 0) return { ...base, "Access-Control-Allow-Origin": "*" };

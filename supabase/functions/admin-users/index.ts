@@ -32,7 +32,7 @@ const firebaseProjectId = Deno.env.get("FIREBASE_PROJECT_ID") ?? "";
 const firebaseClientEmail = Deno.env.get("FIREBASE_CLIENT_EMAIL") ?? "";
 const firebasePrivateKey = (Deno.env.get("FIREBASE_PRIVATE_KEY") ?? "").replace(/\\n/g, "\n");
 const domain = "auth.padlet.invalid";
-const corsHeaders = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info", "Access-Control-Allow-Methods": "POST, OPTIONS" };
+const baseCors = { "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info", "Access-Control-Allow-Methods": "POST, OPTIONS" };
 const validUsername = (username: unknown) => typeof username === "string" && /^[a-z0-9][a-z0-9._-]{2,31}$/.test(username);
 function base64Url(value: string | Uint8Array) {
   const bytes = typeof value === "string" ? new TextEncoder().encode(value) : value;
@@ -82,7 +82,28 @@ async function revokeFirebaseRefreshTokens(uid: string) {
   }
 }
 
+// --- CORS et MFA (début) : bloc identique dans admin-users et firebase-custom-token (vérifié par tests/phase7.test.mjs) ---
+// ALLOWED_ORIGINS (secret, adresses séparées par des virgules) limite les sites autorisés ; non défini = « * » (comportement d'avant).
+// REQUIRE_MFA_FOR_ADMIN = "true" exige un jeton Supabase de niveau aal2 (mot de passe + code) pour les administrateurs.
+const allowedOrigins = (Deno.env.get("ALLOWED_ORIGINS") ?? "").split(",").map((origin) => origin.trim()).filter(Boolean);
+const requireMfaForAdmin = Deno.env.get("REQUIRE_MFA_FOR_ADMIN") === "true";
+function corsHeadersFor(origin: string, allowed: string[], base: Record<string, string>) {
+  if (allowed.length === 0) return { ...base, "Access-Control-Allow-Origin": "*" };
+  return { ...base, "Access-Control-Allow-Origin": allowed.includes(origin) ? origin : allowed[0], Vary: "Origin" };
+}
+function jwtAal(authorization: string) {
+  try {
+    const payload = authorization.replace(/^Bearer\s+/i, "").split(".")[1];
+    return JSON.parse(atob(payload.replace(/-/g, "+").replace(/_/g, "/"))).aal ?? "aal1";
+  } catch { return ""; }
+}
+function mfaMissing(required: boolean, role: string, authorization: string) {
+  return required && role === "admin" && jwtAal(authorization) !== "aal2";
+}
+// --- CORS et MFA (fin) ---
+
 Deno.serve(async (request) => {
+  const corsHeaders = corsHeadersFor(request.headers.get("Origin") ?? "", allowedOrigins, baseCors);
   let pending: Record<string, unknown> | null = null;
   if (request.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
   try {
@@ -94,6 +115,7 @@ Deno.serve(async (request) => {
     const { data: profile, error: profileError } = caller ? await admin.from("profiles").select("id, username, role").eq("id", caller.id).maybeSingle() : { data: null, error: null };
     if (callerError || profileError) throw new Error("Vérification de la session impossible.");
     if (!caller || profile?.role !== "admin") return new Response(JSON.stringify({ error: "Accès administrateur requis" }), { status: 403, headers: corsHeaders });
+    if (mfaMissing(requireMfaForAdmin, "admin", authorization)) return new Response(JSON.stringify({ error: "Authentification à deux facteurs requise pour les administrateurs.", code: "mfa_required" }), { status: 403, headers: corsHeaders });
     const body = await request.json();
     pending = { action: body.action === "update" ? "user.role-change" : `user.${body.action}`, actorId: caller.id, targetId: typeof body.id === "string" ? body.id : undefined };
     if (body.action === "list") { const { data, error } = await admin.from("profiles").select("id, username, role, created_at").order("username"); if (error) throw error; return Response.json({ users: data }, { headers: corsHeaders }); }

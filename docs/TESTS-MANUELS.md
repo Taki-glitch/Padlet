@@ -73,6 +73,20 @@
 - [ ] Frise graphique : Tab sur la zone défilable puis flèches gauche/droite la font défiler
 - [ ] Téléphone : les boutons de navigation passent à la ligne sans déborder
 
+## 1.0.0-rc.1
+- [ ] Tableau de bord : « Calendrier » affiche le mois courant, les échéances (« Échéance : … ») et expirations ; mois précédent/suivant ; un clic ouvre la fiche
+- [ ] Bandeau de rappel visible s'il y a une échéance dépassée ou dans 7 jours ; « Masquer » le cache ; coupe le réseau : bandeau « hors connexion »
+- [ ] Échéance : « Marquer en cours » puis « remettre à faire » ; une échéance terminée disparaît du calendrier
+- [ ] Fiche → « Épingler en haut » : elle passe en tête de liste avec la pastille « Épinglé » ; « Désépingler » la remet
+- [ ] Fiche (admin) → note privée : enregistrer, rouvrir la fiche, la note revient ; compte ordinaire : aucune note visible (après publication des règles)
+- [ ] Paramètres → « Exporter les fiches affichées (CSV) » : s'ouvre dans Excel avec les accents ; une cellule « =1+1 » apparaît comme texte
+- [ ] Journal : filtre et « Exporter le journal (CSV) »
+- [ ] Santé du site (admin) : dernière sauvegarde, purge, partage, conformité ; bandeau si aucune sauvegarde récente
+- [ ] Frise : « Année civile » dans le regroupement ; clic sur une couleur de la légende filtre par thème, « Tout afficher » retire le filtre
+- [ ] Raccourcis : `/` (recherche), `?` (guide), `n` (ajouter, admin), `1` `2` `3` ; sans effet dans un champ de saisie ; « Aller au contenu » apparaît au premier Tab
+- [ ] Deuxième étape (compte de TEST d'abord) : activer, se reconnecter avec le code ; mauvais code refusé ; désactiver
+- [ ] Téléphone : « Ajouter à l'écran d'accueil » propose l'installation avec l'icône Padlet
+
 ## Appareils réels (à cocher seulement si testés sur l'appareil, pas en émulation)
 - [ ] iPhone / Safari : connexion, recherche, aperçu PDF, téléchargement, frise (zoom au doigt), modales (clavier à l'écran)
 - [ ] iPad / Safari : mêmes tests, orientation portrait et paysage

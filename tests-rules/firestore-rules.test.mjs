@@ -85,6 +85,16 @@ test("avis : tout compte connecté peut en envoyer à son nom ; lecture administ
   await assertFails(updateDoc(doc(as("admin"), "feedback/f1"), { message: "modifié par un admin" }));
 });
 
+test("notes privées : administrateurs seulement, jamais lisibles par un utilisateur", async () => {
+  const note = (uid) => ({ text: "Note privée", updatedAt: serverTimestamp(), updatedBy: uid });
+  await assertSucceeds(setDoc(doc(as("admin"), "adminNotes/shared"), note("adm")));
+  await assertFails(setDoc(doc(as("admin"), "adminNotes/x"), note("quelquun-d-autre")));
+  await assertFails(setDoc(doc(as("admin"), "adminNotes/y"), { ...note("adm"), text: "x".repeat(2001) }));
+  await assertFails(getDoc(doc(as("user"), "adminNotes/shared")));
+  await assertFails(setDoc(doc(as("user"), "adminNotes/z"), note("usr")));
+  await assertSucceeds(getDoc(doc(as("admin"), "adminNotes/shared")));
+});
+
 test("règles ACTUELLES (firestore.rules) : comportement connu — tout utilisateur connecté lit toutes les fiches", async () => {
   current = await initializeTestEnvironment({ projectId: "padlet-rules-test-current", firestore: { rules: rules("firestore.rules") } });
   await seed(current);

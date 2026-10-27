@@ -1,0 +1,23 @@
+{
+  "name": "Padlet – Mon Mur de Documents",
+  "short_name": "Padlet",
+  "description": "Centraliser, rechercher et organiser vos documents autour d’une frise chronologique.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#4f46e5",
+  "lang": "fr",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

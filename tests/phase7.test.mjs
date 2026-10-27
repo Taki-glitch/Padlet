@@ -266,7 +266,8 @@ test("règles « partage » : identiques aux règles actuelles sauf la lecture l
   let reverted = target.split("\n").slice(2).join("\n")
     .replace("      // PARTAGE : un utilisateur ordinaire ne lit que les fiches `shared == true` (l'application filtre avec where('shared','==',true)).\n      allow read: if request.auth != null\n        && (request.auth.token.role == 'admin' || resource.data.shared == true);", "      allow read: if request.auth != null;")
     .replace("<= 52428800))\n        && (!('shared' in data) || data.shared is bool);", "<= 52428800));");
-  const feedbackStart = reverted.indexOf("\n    // Avis des utilisateurs");
+  const notesStart = reverted.indexOf("\n    // Notes privées");
+  const feedbackStart = notesStart > 0 ? notesStart : reverted.indexOf("\n    // Avis des utilisateurs");
   const feedbackEnd = reverted.indexOf("\n    // État de la dernière purge");
   assert.ok(feedbackStart > 0 && feedbackEnd > feedbackStart, "bloc feedback introuvable");
   reverted = reverted.slice(0, feedbackStart) + reverted.slice(feedbackEnd);
@@ -397,4 +398,121 @@ test("frise : aller à une date, centrage, regroupement précédent/suivant, sau
   assert.equal(stepTarget({ ...base, starts: [], index: 0, direction: -1 }), 0, "borné au début");
   assert.equal(stepTarget({ ...base, starts, index: 3, direction: 1 }), 4, "dernier groupe : une page, borné");
   assert.equal(stepTarget({ ...base, count: 0, starts: [], index: 0, direction: 1 }), -1);
+});
+
+import { isCivil, calendarEvents, shiftMonth, monthGrid } from "../modules/calendar.mjs";
+import { deadlineStatus, reminderSummary, reminderMessage, backupReminder } from "../modules/reminders.mjs";
+import { csvCell, toCsv, ITEM_COLUMNS } from "../modules/csv.mjs";
+import { isPinned, withPinnedFirst } from "../modules/pins.mjs";
+import { cleanTotpCode, validateTotpCode, needsMfaChallenge, verifiedTotpFactor } from "../modules/mfa.mjs";
+import { timelineGroup } from "../modules/timeline.mjs";
+
+test("calendrier : grille du mois (lundi premier), événements, changement de mois", () => {
+  assert.equal(isCivil("2026-02-30"), false); assert.equal(isCivil("2028-02-29"), true);
+  const items = [
+    { id: "d1", type: "deadline", title: "Rapport", date: "2026-10-15" },
+    { id: "d2", type: "deadline", title: "Faite", date: "2026-10-15", done: true },
+    { id: "d3", type: "deadline", title: "Cours", date: "2026-10-31", status: "inprogress" },
+    { id: "p1", type: "document", title: "Contrat", expiresAt: "2026-10-31" },
+    { id: "x", type: "deadline", title: "Date cassée", date: "2026-13-01" }
+  ];
+  const events = calendarEvents(items);
+  assert.deepEqual(events.map((e) => e.id), ["d1", "d3", "p1"], "terminée et date invalide exclues");
+  const grid = monthGrid(2026, 10, events, "2026-10-24");
+  assert.equal(grid.label, "Octobre 2026");
+  assert.equal(grid.weeks[0][0].date, "2026-09-28", "1er octobre 2026 = jeudi : la grille commence le lundi 28 septembre");
+  assert.equal(grid.weeks[0][3].date, "2026-10-01"); assert.equal(grid.weeks[0][3].inMonth, true);
+  assert.equal(grid.weeks[0][0].inMonth, false);
+  const flat = grid.weeks.flat();
+  assert.equal(flat.find((c) => c.date === "2026-10-15").events.length, 1);
+  assert.equal(flat.find((c) => c.date === "2026-10-31").events.length, 2);
+  assert.equal(flat.find((c) => c.date === "2026-10-24").today, true);
+  assert.ok(grid.weeks.length >= 5 && grid.weeks.length <= 6);
+  assert.ok(grid.weeks.every((week) => week.length === 7));
+  assert.deepEqual(shiftMonth(2026, 12, 1), { year: 2027, month: 1 });
+  assert.deepEqual(shiftMonth(2026, 1, -1), { year: 2025, month: 12 });
+  assert.equal(monthGrid(2027, 2, [], "").weeks.length, 4, "février 2027 : lundi 1er au dimanche 28 = exactement 4 semaines");
+  assert.equal(monthGrid(2026, 2, [], "").weeks.length, 5, "février 2026 commence un dimanche : 5 semaines");
+  assert.equal(monthGrid(2026, 11, [], "").weeks.length, 6, "novembre 2026 : 6 semaines");
+});
+
+test("rappels : échéances dépassées / proches, statuts, rappel de sauvegarde", () => {
+  assert.equal(deadlineStatus({ done: true, status: "inprogress" }), "done");
+  assert.equal(deadlineStatus({ status: "inprogress" }), "inprogress");
+  assert.equal(deadlineStatus({}), "todo");
+  const items = [
+    { type: "deadline", date: "2026-10-20" }, { type: "deadline", date: "2026-10-24" }, { type: "deadline", date: "2026-10-31" },
+    { type: "deadline", date: "2026-11-01" }, { type: "deadline", date: "2026-10-01", done: true },
+    { type: "document", expiresAt: "2026-10-26" }, { type: "document", expiresAt: "2026-12-01" }
+  ];
+  assert.deepEqual(reminderSummary(items, "2026-10-24"), { overdue: 1, soon: 2, expiringSoon: 1 });
+  assert.deepEqual(reminderSummary(items, "pas une date"), { overdue: 0, soon: 0, expiringSoon: 0 });
+  assert.equal(reminderMessage({ overdue: 1, soon: 2, expiringSoon: 1 }), "1 échéance dépassée · 2 échéances dans les 7 jours · 1 document expirant dans les 7 jours");
+  assert.equal(reminderMessage({ overdue: 0, soon: 0, expiringSoon: 0 }), "");
+  const day = 86400000, now = Date.UTC(2026, 9, 24);
+  assert.match(backupReminder(null, now), /Aucune sauvegarde/);
+  assert.equal(backupReminder(now - 3 * day, now), "");
+  assert.match(backupReminder(now - 10 * day, now), /10 jours/);
+});
+
+test("CSV : guillemets, séparateur, injection de formule, BOM", () => {
+  assert.equal(csvCell("simple"), "simple");
+  assert.equal(csvCell('a;b'), '"a;b"');
+  assert.equal(csvCell('dit "oui"'), '"dit ""oui"""');
+  assert.equal(csvCell("ligne1\nligne2"), '"ligne1\nligne2"');
+  for (const dangerous of ["=1+1", "+33", "-2", "@SUM(A1)"]) assert.ok(csvCell(dangerous).startsWith("'"), `injection non neutralisée : ${dangerous}`);
+  assert.equal(csvCell(null), ""); assert.equal(csvCell(0), "0");
+  const csv = toCsv([{ type: "document", title: "Rapport; final", shared: false, fileSize: 1024 }, { type: "deadline", title: "=HYPERLINK(\"x\")", done: true }], ITEM_COLUMNS);
+  assert.ok(csv.startsWith("\ufeffType;Titre;"));
+  const lines = csv.trim().split("\r\n");
+  assert.equal(lines.length, 3);
+  assert.ok(lines[1].includes('"Rapport; final"') && lines[1].includes(";non;"));
+  assert.ok(lines[2].includes("'=HYPERLINK") && lines[2].includes("terminée"));
+});
+
+test("épingles : épinglées d'abord, ordre conservé", () => {
+  const sorted = [{ id: 1 }, { id: 2, pinned: true }, { id: 3 }, { id: 4, pinned: true }];
+  assert.deepEqual(withPinnedFirst(sorted).map((i) => i.id), [2, 4, 1, 3]);
+  assert.equal(isPinned({ pinned: "oui" }), false, "seul le booléen true compte");
+  assert.deepEqual(sorted.map((i) => i.id), [1, 2, 3, 4], "le tableau d'origine n'est pas modifié");
+});
+
+test("double authentification : code, niveaux, facteur actif", () => {
+  assert.equal(cleanTotpCode(" 123 456 "), "123456");
+  assert.equal(validateTotpCode("123 456"), "");
+  assert.match(validateTotpCode("12345"), /6 chiffres/);
+  assert.match(validateTotpCode("12345a"), /6 chiffres/);
+  assert.equal(needsMfaChallenge({ currentLevel: "aal1", nextLevel: "aal2" }), true);
+  assert.equal(needsMfaChallenge({ currentLevel: "aal2", nextLevel: "aal2" }), false);
+  assert.equal(needsMfaChallenge({ currentLevel: "aal1", nextLevel: "aal1" }), false);
+  assert.equal(needsMfaChallenge(null), false);
+  assert.equal(verifiedTotpFactor({ totp: [{ id: "a", status: "unverified" }, { id: "b", status: "verified" }] }).id, "b");
+  assert.equal(verifiedTotpFactor({ totp: [{ id: "a", status: "unverified" }] }), null);
+  assert.equal(verifiedTotpFactor(null), null);
+});
+
+test("frise : regroupement par année civile", () => {
+  assert.deepEqual(timelineGroup("2026-12-31", "year"), { key: "2026", label: "Année 2026" });
+  assert.equal(timelineGroup("2026-12-31", "theocratic").key, "2026");
+  assert.equal(timelineGroup("n'importe quoi", "year"), null);
+});
+
+test("fonctions serveur : bloc CORS/MFA identique et comportement (liste d'origines, niveau aal2)", async () => {
+  const extract = (path) => { const src = readFileSync(new URL(`../${path}`, import.meta.url), "utf8"); const a = src.indexOf("// --- CORS et MFA (début)"), b = src.indexOf("// --- CORS et MFA (fin)"); assert.ok(a > 0 && b > a, `${path} : bloc introuvable`); return src.slice(a, b); };
+  const admin = extract("supabase/functions/admin-users/index.ts"), custom = extract("supabase/functions/firebase-custom-token/index.ts");
+  assert.equal(admin, custom, "le bloc CORS/MFA doit être identique dans les deux fonctions");
+  const body = stripTypeScriptTypes(admin.replace(/Deno\.env\.get\("ALLOWED_ORIGINS"\) \?\? ""/, '""').replace(/Deno\.env\.get\("REQUIRE_MFA_FOR_ADMIN"\) === "true"/, "false"));
+  const mod = await import("data:text/javascript," + encodeURIComponent(`${body}\nexport { corsHeadersFor, jwtAal, mfaMissing };`));
+  const base = { "Access-Control-Allow-Methods": "POST" };
+  assert.equal(mod.corsHeadersFor("https://x", [], base)["Access-Control-Allow-Origin"], "*", "sans liste : comportement d'avant");
+  const allowed = ["https://taki-glitch.github.io"];
+  assert.equal(mod.corsHeadersFor("https://taki-glitch.github.io", allowed, base)["Access-Control-Allow-Origin"], "https://taki-glitch.github.io");
+  assert.equal(mod.corsHeadersFor("https://pirate.example", allowed, base)["Access-Control-Allow-Origin"], "https://taki-glitch.github.io", "origine inconnue : jamais reflétée");
+  assert.equal(mod.corsHeadersFor("https://pirate.example", allowed, base).Vary, "Origin");
+  const jwt = (aal) => `Bearer h.${Buffer.from(JSON.stringify(aal ? { aal } : {})).toString("base64url")}.s`;
+  assert.equal(mod.jwtAal(jwt("aal2")), "aal2"); assert.equal(mod.jwtAal(jwt()), "aal1"); assert.equal(mod.jwtAal("Bearer nimportequoi"), "");
+  assert.equal(mod.mfaMissing(true, "admin", jwt("aal1")), true, "admin sans second facteur : refusé");
+  assert.equal(mod.mfaMissing(true, "admin", jwt("aal2")), false);
+  assert.equal(mod.mfaMissing(true, "user", jwt("aal1")), false, "les utilisateurs ordinaires ne sont pas concernés");
+  assert.equal(mod.mfaMissing(false, "admin", jwt("aal1")), false, "désactivé par défaut");
 });

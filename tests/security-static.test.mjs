@@ -32,7 +32,7 @@ test("règles Firestore (actuelles et « partage ») : seules les collections pr
   for (const file of ["firestore.rules", "firestore.rules.partage"]) {
     const rules = read(file);
     const collections = [...rules.matchAll(/match \/([A-Za-z]+)\/\{/g)].map((m) => m[1]).filter((name) => name !== "databases").sort();
-    assert.deepEqual(collections, file.endsWith("partage") ? ["activityLog", "feedback", "padletItems", "system"] : ["activityLog", "padletItems", "system"], file);
+    assert.deepEqual(collections, file.endsWith("partage") ? ["activityLog", "adminNotes", "feedback", "padletItems", "system"] : ["activityLog", "padletItems", "system"], file);
     assert.ok(!/if\s+true/.test(rules), `${file} : « if true » interdit`);
     for (const allow of rules.matchAll(/allow [a-z, ]+:\s*if([^;]*);/g)) {
       assert.ok(allow[1].includes("request.auth != null") || allow[1].trim() === "false", `${file} : règle sans authentification : ${allow[0].slice(0, 60)}`);
@@ -40,7 +40,9 @@ test("règles Firestore (actuelles et « partage ») : seules les collections pr
     assert.match(rules, /match \/system\/\{docId\} \{[^}]*allow write: if false;/s, `${file} : system doit rester en écriture interdite`);
     assert.match(rules, /allow update, delete: if false;/, `${file} : activityLog doit rester non modifiable`);
   }
-  assert.match(read("firestore.rules.partage"), /allow read, delete: if request\.auth != null && request\.auth\.token\.role == 'admin'/, "feedback : lecture réservée aux administrateurs");
+  const target = read("firestore.rules.partage");
+  assert.match(target, /match \/feedback\/\{feedbackId\} \{\s*allow read, delete: if request\.auth != null && request\.auth\.token\.role == 'admin'/, "feedback : lecture réservée aux administrateurs");
+  assert.match(target, /match \/adminNotes\/\{noteId\} \{\s*allow read, delete: if request\.auth != null && request\.auth\.token\.role == 'admin'/, "adminNotes : lecture réservée aux administrateurs");
 });
 
 test("Edge Functions sans vérification de jeton par la passerelle : le code vérifie l'utilisateur lui-même", () => {

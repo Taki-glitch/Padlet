@@ -48,6 +48,9 @@ export function timelineGroup(value, mode) {
         const label = new Intl.DateTimeFormat("fr-FR", { month: "long", year: "numeric", timeZone: "UTC" }).format(date);
         return { key: `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`, label: label.charAt(0).toUpperCase() + label.slice(1) };
     }
+    if (mode === "year") {
+        return { key: String(date.getUTCFullYear()), label: `Année ${date.getUTCFullYear()}` };
+    }
     if (mode === "theocratic") {
         const start = theocraticYearStart(value);
         return { key: String(start), label: `Année théocratique ${start}-${start + 1}` };

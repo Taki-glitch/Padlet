@@ -4,7 +4,8 @@ const COMMON = [
     ["Thèmes et tags", "Les thèmes rangent les documents par grands sujets ; les tags sont des mots-clés transversaux. Cliquez sur un tag pour filtrer."],
     ["La frise chronologique", "L’onglet « Frise » place les documents et les échéances dans le temps. Cliquez sur un élément pour l’ouvrir."],
     ["Les échéances", "Le « Tableau de bord » montre les échéances à venir et dépassées. Paramètres → « Exporter les échéances (.ics) » les envoie vers votre agenda."],
-    ["Favoris", "L’étoile d’une fiche l’ajoute à vos favoris, sur cet appareil."]
+    ["Favoris", "L’étoile d’une fiche l’ajoute à vos favoris, sur cet appareil."],
+    ["Raccourcis clavier", "« / » ouvre la recherche, « ? » ce guide, « 1 », « 2 », « 3 » changent de vue (Documents, Frise, Tableau de bord)."]
 ];
 const ADMIN = [
     ["Ajouter un document et choisir de le partager", "« + Ajouter » : la case « Visible par les utilisateurs » décide si les utilisateurs ordinaires voient la fiche. Décochée par défaut."],

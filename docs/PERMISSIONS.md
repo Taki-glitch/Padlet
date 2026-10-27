@@ -12,6 +12,8 @@
 | Exporter les échéances (.ics), changer son mot de passe | non | oui | oui | navigateur + Supabase Auth |
 | Marquer une échéance terminée | non | non | oui | règles Firestore |
 | Créer, modifier le rôle, supprimer un compte | non | non | oui | Edge Function `admin-users` (rôle relu en base) |
+| Notes privées sur une fiche (`adminNotes`) | non | non | oui | règles Firestore « partage » |
+| Épingler une fiche, statut « en cours » | non | non | oui | règles Firestore |
 | Lire le journal d'activité | non | non | oui | règles Firestore |
 | Écrire dans le journal | non | non | oui (son propre nom) + le serveur | règles / compte de service |
 | Sauvegarde, restauration, indexation PDF | non | non | oui | règles + interface |

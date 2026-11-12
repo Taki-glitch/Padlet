@@ -6,8 +6,8 @@
 1. [ ] Fusionner cette version ; **Actions** vert ; Paramètres affiche « Version 1.0.0-rc.1 ».
 2. [ ] Tester dans un navigateur tout ce qui est dans `docs/TESTS-MANUELS.md` (sections 0.7.0 à 1.0.0-rc.1), sur ordinateur **et** téléphone.
 3. [ ] Terminer le partage (`docs/PARTAGE.md`, étapes 2 à 6) et **republier** `firestore.rules.partage` (elle contient maintenant `feedback` et `adminNotes`).
-4. [ ] Passer les tests des règles : GitHub → Actions → « Règles Firestore (émulateur) » → Run workflow, vert. Puis retirer `continue-on-error: true` de `.github/workflows/rules-emulator.yml`.
-5. [ ] Lancer « Test de fumée (navigateur) » et « Mesure de performance (Lighthouse) » (Actions → Run workflow) ; noter les résultats.
+4. [ ] Ajouter puis exécuter un workflow des règles Firestore sur émulateur. Aucun workflow n'est actuellement présent dans `.github/workflows/` ; ne pas considérer les tests comme validés avant un passage vert.
+5. [ ] Ajouter puis exécuter les workflows de fumée navigateur et de performance Lighthouse ; noter les résultats. Aucun workflow navigateur ou Lighthouse n'est actuellement présent.
 6. [ ] **Test réel de restauration** sur un projet de test (`docs/TEST-RESTAURATION.md`).
 7. [ ] Activer ta deuxième étape (`docs/MFA.md`) ; décider d'imposer ou non `REQUIRE_MFA_FOR_ADMIN`.
 8. [ ] Redéployer `admin-users` et `firebase-custom-token` (éditeur Supabase, fichier complet de chaque fonction) ; tester création d'utilisateur, changement de rôle, connexion.

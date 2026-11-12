@@ -1,6 +1,8 @@
 # Contrôles automatiques (GitHub Actions)
 
-Le workflow `.github/workflows/ci.yml` s'exécute à chaque pull request et à chaque push sur `main` (Node 22, aucun secret, aucun déploiement).
+**État au 2026-11-12 : aucun workflow GitHub Actions n'est présent dans ce dépôt.** Les étapes ci-dessous décrivent la CI souhaitée et ne sont pas exécutées par GitHub. Ajouter et vérifier les workflows avant de s'appuyer sur ces statuts ou de configurer une protection de branche.
+
+Le workflow à créer `.github/workflows/ci.yml` devra s'exécuter à chaque pull request et à chaque push sur `main` (Node 22, aucun secret, aucun déploiement).
 
 | Étape | Commande | Ce qu'elle détecte |
 |---|---|---|
@@ -16,4 +18,4 @@ Les imports `https://`, `npm:` et les modules nus (Deno) ne sont pas traités co
 En cas d'échec, ouvrez l'onglet *Actions* de la pull request : le fichier, la ligne et l'import fautifs sont indiqués.
 
 ## Règles Firestore sur l'émulateur
-`.github/workflows/rules-emulator.yml` (lancement manuel ou à la modification des règles) exécute `tests-rules/` sur l'émulateur Firebase, sans donnée réelle. Non bloquant au début ; à rendre bloquant après un premier passage vert.
+Le workflow à créer `.github/workflows/rules-emulator.yml` devra exécuter `tests-rules/` sur l'émulateur Firebase, sans donnée réelle, manuellement ou lors d'une modification des règles. Le rendre bloquant après un premier passage vert.

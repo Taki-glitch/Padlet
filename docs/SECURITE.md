@@ -26,12 +26,19 @@ from storage.objects where bucket_id = 'documents' group by 1,2 order by 3 desc;
 ```
 Ajoutez à `ALLOWED_EXTENSIONS` toute extension légitime absente de la liste avant de déployer.
 
-## Passer le bucket en privé (bascule progressive)
-1. Déployer cette version et vérifier : aperçu d'une image, ouverture d'un PDF, téléchargement (ils utilisent déjà des URL signées).
-2. Vérifier qu'aucune fiche n'a un `fileUrl` sans `filePath` (elle cesserait de fonctionner) : l'analyse de cohérence signale les chemins invalides.
-3. SQL Editor : `update storage.buckets set public = false where id = 'documents';`
-4. Tester : une ancienne URL publique ouverte en navigation privée doit être refusée ; l'application doit continuer à afficher les fichiers.
-5. **Retour arrière immédiat** si un problème apparaît : `update storage.buckets set public = true where id = 'documents';`
+## Passage éventuel du bucket en privé (non effectué)
+
+Le bucket reste public dans cette branche. La bascule seule ne protège pas les fiches privées : la politique `Authenticated read documents` autorise actuellement tout utilisateur authentifié à lire tous les objets. Une URL signée créée par le client ne constitue pas non plus un contrôle d'accès par fiche tant que cette politique reste ouverte.
+
+Procédure progressive à réaliser après implémentation et validation d'un service de signature autorisé :
+1. Inventorier tous les objets et références Firestore, avec `filePath`, `fileUrl`, fiches actives, corbeille, références dupliquées et chemins hérités (`padlet-files/`). Conserver un export du bilan.
+2. Déployer un Edge Function de lecture/signature qui valide le bearer Supabase, relit le rôle depuis `profiles`, vérifie dans Firestore le `filePath` exact et l'état `shared`/corbeille, puis crée une URL signée courte (5 à 15 minutes). Un admin peut signer toute fiche ; un utilisateur ordinaire seulement une fiche partagée active.
+3. Faire passer aperçus, PDF et lectures de sauvegarde par ce mécanisme. Le code actuel appelle Storage directement pour signer/télécharger ; ces appels doivent être remplacés avant de retirer la politique de lecture.
+4. Tester dans un projet isolé : accès admin, partage actif, fiche privée, corbeille, restauration, jeton expiré, chemin altéré, chemin manquant, anciens objets et URL expirée. Vérifier aussi que Storage refuse les lectures directes anonymes et authentifiées.
+5. Revoir la politique RLS : retirer la lecture `authenticated` générale ; conserver les écritures/suppressions admin selon `profiles`. Appliquer les changements seulement après le test et avec un retour arrière prêt.
+6. Basculer `documents` à `public = false` en dernier. Vérifier les anciennes URL et l'application. Les métadonnées `filePath` et `fileUrl` restent inchangées pour préserver la compatibilité.
+
+Retour arrière : rétablir d'abord la politique de lecture précédente si nécessaire, puis `update storage.buckets set public = true where id = 'documents';`. Les URL signées déjà distribuées expirent selon leur TTL. Ne supprimer aucun objet ni réécrire les chemins durant cette migration.
 
 ## CSP proposée (non appliquée)
 ```

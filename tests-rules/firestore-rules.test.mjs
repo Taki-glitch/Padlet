@@ -1,10 +1,10 @@
-// Tests des règles Firestore sur l'ÉMULATEUR (aucune donnée réelle). Lancés par .github/workflows/rules-emulator.yml.
+// Tests des règles Firestore sur l'ÉMULATEUR (aucune donnée réelle). À lancer avec Firebase Emulator Suite.
 // ÉCRIT MAIS JAMAIS EXÉCUTÉ dans l'environnement de rédaction (ni Java ni réseau) : à valider au premier passage de la CI.
 // Vérifient les accès autorisés ET les refus de firestore.rules.partage (version cible) et le comportement connu de firestore.rules.
 import test, { before, after } from "node:test";
 import { readFileSync } from "node:fs";
 import { initializeTestEnvironment, assertFails, assertSucceeds } from "@firebase/rules-unit-testing";
-import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, collection, query, where, serverTimestamp, Timestamp } from "firebase/firestore";
+import { doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, deleteField, collection, query, where, serverTimestamp, Timestamp } from "firebase/firestore";
 
 const rules = (name) => readFileSync(new URL(`../${name}`, import.meta.url), "utf8");
 let env, current;
@@ -35,6 +35,14 @@ test("fiches : visiteur refusé, utilisateur = partagées seulement, administrat
   await assertFails(getDoc(doc(as("user"), "padletItems/trashed")));
   await assertFails(getDoc(doc(as("user"), "padletItems/legacy")));
   for (const id of ["shared", "private", "trashed", "legacy"]) await assertSucceeds(getDoc(doc(as("admin"), `padletItems/${id}`)));
+});
+
+test("corbeille : un utilisateur ne lit pas la fiche supprimée, puis peut la lire après restauration par un admin", async () => {
+  await assertFails(getDoc(doc(as("user"), "padletItems/trashed")));
+  await assertSucceeds(updateDoc(doc(as("admin"), "padletItems/trashed"), {
+    shared: true, deletedAt: deleteField(), sharedBeforeTrash: deleteField()
+  }));
+  await assertSucceeds(getDoc(doc(as("user"), "padletItems/trashed")));
 });
 
 test("liste : la requête filtrée sur shared == true passe, la requête non filtrée est refusée pour un utilisateur", async () => {

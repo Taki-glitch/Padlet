@@ -160,7 +160,10 @@ une syntaxe e-mail compatible avec l'API `signInWithPassword` et avec
    vérifie toujours elle-même `Authorization: Bearer <Supabase JWT>` avec
    `supabase.auth.getUser()`. `firebase-custom-token` lit en plus le rôle réel
    dans `profiles` et signe le claim Firebase `role` ; `admin-users` relit ce rôle
-   côté serveur avant chaque action.
+   côté serveur avant chaque action. Dans le code versionné, les origines CORS
+   autorisées par défaut sont limitées à `https://taki-glitch.github.io`; une
+   variable `ALLOWED_ORIGINS` explicite remplace cette liste pour les aperçus et
+   tests. Ce réglage prend effet après redéploiement des fonctions.
 
    `admin-users` exige un appelant dont `profiles.role = 'admin'`. Ses actions JSON
    sont `list`, `create`, `update`, `reset-password` et `delete`; aucun mot de

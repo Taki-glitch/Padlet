@@ -1,8 +1,8 @@
 // Archive ZIP minimale (entrées non compressées, UTF-8) : création et lecture avec contrôle CRC-32.
-const encoder = new TextEncoder(), decoder = new TextDecoder();
+const encoder = new TextEncoder(), decoder = new TextDecoder("utf-8", { fatal: true });
 const TABLE = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
 export function crc32(bytes) { let c = 0xffffffff; for (let i = 0; i < bytes.length; i++) c = TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; }
-export const isSafeName = (name) => name.length > 0 && !name.startsWith("/") && !name.includes("\\") && !name.split("/").includes("..");
+export const isSafeName = (name) => typeof name === "string" && name.length > 0 && !name.startsWith("/") && !name.includes("\\") && name.split("/").every((part) => part && part !== "." && part !== "..");
 const invalid = () => new Error("Archive invalide ou tronquée.");
 
 export function createZip(entries) {
@@ -34,18 +34,35 @@ export function readZip(bytes) {
     let eocd = -1;
     for (let i = bytes.length - 22; i >= Math.max(0, bytes.length - 22 - 65535); i--) if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
     if (eocd < 0) throw invalid();
-    const count = view.getUint16(eocd + 10, true), size = view.getUint32(eocd + 12, true), start = view.getUint32(eocd + 16, true);
-    if (start + size > eocd) throw invalid();
+    const commentLength = view.getUint16(eocd + 20, true);
+    const disk = view.getUint16(eocd + 4, true), centralDisk = view.getUint16(eocd + 6, true);
+    const diskCount = view.getUint16(eocd + 8, true), count = view.getUint16(eocd + 10, true);
+    const size = view.getUint32(eocd + 12, true), start = view.getUint32(eocd + 16, true);
+    if (eocd + 22 + commentLength !== bytes.length || disk !== 0 || centralDisk !== 0 || diskCount !== count || count === 0xffff || size === 0xffffffff || start === 0xffffffff || start + size !== eocd) throw invalid();
     const entries = new Map(); let p = start;
     for (let n = 0; n < count; n++) {
         if (p + 46 > bytes.length || view.getUint32(p, true) !== 0x02014b50) throw invalid();
-        const method = view.getUint16(p + 10, true), nameLength = view.getUint16(p + 28, true);
-        const name = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLength));
+        const flags = view.getUint16(p + 8, true), method = view.getUint16(p + 10, true);
+        const compressedSize = view.getUint32(p + 20, true), entrySize = view.getUint32(p + 24, true);
+        const nameLength = view.getUint16(p + 28, true), extraLength = view.getUint16(p + 30, true), entryCommentLength = view.getUint16(p + 32, true);
+        const localOffset = view.getUint32(p + 42, true);
+        if (flags !== 0x0800 || compressedSize !== entrySize || localOffset >= start) throw new Error("Archive ZIP non prise en charge ou mal formée.");
+        if (p + 46 + nameLength + extraLength + entryCommentLength > start + size) throw invalid();
+        let name;
+        try { name = decoder.decode(bytes.subarray(p + 46, p + 46 + nameLength)); } catch { throw invalid(); }
         if (!isSafeName(name)) throw new Error(`Nom dangereux dans l’archive : ${name}`);
         if (method !== 0) throw new Error("Archive recompressée non prise en charge : utilisez l’archive telle que créée par Padlet.");
-        entries.set(name, { crc: view.getUint32(p + 16, true), size: view.getUint32(p + 24, true), offset: view.getUint32(p + 42, true) });
-        p += 46 + nameLength + view.getUint16(p + 30, true) + view.getUint16(p + 32, true);
+        const entry = { crc: view.getUint32(p + 16, true), size: entrySize, offset: localOffset, centralStart: start, flags, method, name };
+        if (entries.has(name)) {
+            // Les exports v1 antérieurs pouvaient inclure plusieurs fois un même fichier partagé.
+            // Ne les fusionner que si les données vérifiées sont identiques.
+            const previous = extractEntry(bytes, entries, name);
+            const repeated = extractEntry(bytes, new Map([[name, entry]]), name);
+            if (previous.length !== repeated.length || previous.some((byte, index) => byte !== repeated[index])) throw new Error(`Entrée ZIP en double avec contenu différent : ${name}`);
+        } else entries.set(name, entry);
+        p += 46 + nameLength + extraLength + entryCommentLength;
     }
+    if (p !== start + size) throw invalid();
     return entries;
 }
 
@@ -54,9 +71,15 @@ export function extractEntry(bytes, entries, name) {
     if (!entry) throw new Error(`Fichier absent de l’archive : ${name}`);
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (entry.offset + 30 > bytes.length || view.getUint32(entry.offset, true) !== 0x04034b50) throw invalid();
-    const start = entry.offset + 30 + view.getUint16(entry.offset + 26, true) + view.getUint16(entry.offset + 28, true);
-    if (start + entry.size > bytes.length) throw invalid();
-    const data = bytes.subarray(start, start + entry.size);
+    const flags = view.getUint16(entry.offset + 6, true), method = view.getUint16(entry.offset + 8, true);
+    const crc = view.getUint32(entry.offset + 14, true), size = view.getUint32(entry.offset + 18, true), compressedSize = view.getUint32(entry.offset + 22, true);
+    const nameLength = view.getUint16(entry.offset + 26, true), extraLength = view.getUint16(entry.offset + 28, true);
+    let localName;
+    const dataStart = entry.offset + 30 + nameLength + extraLength;
+    if (dataStart > entry.centralStart || dataStart + entry.size > entry.centralStart) throw invalid();
+    try { localName = decoder.decode(bytes.subarray(entry.offset + 30, entry.offset + 30 + nameLength)); } catch { throw invalid(); }
+    if (flags !== entry.flags || method !== entry.method || crc !== entry.crc || size !== entry.size || compressedSize !== entry.size || localName !== name) throw invalid();
+    const data = bytes.subarray(dataStart, dataStart + entry.size);
     if (crc32(data) !== entry.crc) throw new Error(`Entrée corrompue : ${name}`);
     return data;
 }

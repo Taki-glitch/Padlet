@@ -19,7 +19,7 @@ import { personalPreferencesStorageKey, readPersonalPreferences, writePersonalPr
 import { createAuthGateway, hasAdminRole, normalizeUsername } from "./modules/auth.mjs";
 import { deleteDocumentAndFile, PartialDocumentDeletionError } from "./modules/data.mjs";
 import { buildMetadataExportPayload } from "./modules/admin.mjs";
-import { buildBackup, parseBackup, planRestore, executeRestore } from "./modules/backup.mjs";
+import { buildBackup, parseBackup, planRestore, executeRestore, sha256Hex, uploadOrReuseFile, MAX_BACKUP_ARCHIVE_BYTES } from "./modules/backup.mjs";
 import { splitTrash, trashDaysLeft } from "./modules/trash.mjs";
 import { reconcile } from "./modules/reconcile.mjs";
 import { buildActivityEvent, ACTIVITY_RETENTION_DAYS } from "./modules/activity.mjs";
@@ -2434,8 +2434,16 @@ document.addEventListener("keydown", (event) => {
 });
 
 // --- Sauvegarde complète et restauration (modules/backup.mjs) ---
-async function readStorageFile(path) {
-    if (String(path).startsWith("padlet-files/")) throw new Error("Fichier hérité de Firebase Storage : non sauvegardé.");
+async function readStorageFile(path, item) {
+    if (String(path).startsWith("padlet-files/")) {
+        let url;
+        try { url = new URL(item?.fileUrl || ""); } catch { throw new Error("Fichier hérité de Firebase Storage sans URL lisible."); }
+        if (!new Set(["firebasestorage.googleapis.com", "storage.googleapis.com"]).has(url.hostname)) throw new Error("URL de fichier hérité non autorisée pour la sauvegarde.");
+        const response = await fetch(url.href);
+        if (!response.ok) throw new Error(`Téléchargement du fichier hérité impossible (HTTP ${response.status}).`);
+        if (!new Set(["firebasestorage.googleapis.com", "storage.googleapis.com"]).has(new URL(response.url).hostname)) throw new Error("Le fichier hérité a redirigé vers un domaine non autorisé.");
+        return new Uint8Array(await response.arrayBuffer());
+    }
     const { data, error } = await supabase.storage.from("documents").download(path);
     if (error) throw error;
     return new Uint8Array(await data.arrayBuffer());
@@ -2467,9 +2475,13 @@ function renderRestorePreview() {
     run.disabled = count("create") + count("copy") === 0;
 }
 $("restore-file").addEventListener("change", async () => {
-    pendingRestore = null; const file = $("restore-file").files[0];
+    pendingRestore = null; $("restore-result").textContent = ""; const file = $("restore-file").files[0];
     if (file && requireAdmin()) {
-        try { $("restore-preview").textContent = "Vérification de l’archive…"; pendingRestore = await parseBackup(new Uint8Array(await file.arrayBuffer())); }
+        try {
+            if (file.size > MAX_BACKUP_ARCHIVE_BYTES) throw new Error("Archive trop volumineuse pour le navigateur (limite 512 Mio).");
+            $("restore-preview").textContent = "Vérification complète de l’archive…";
+            pendingRestore = await parseBackup(new Uint8Array(await file.arrayBuffer()));
+        }
         catch (error) { $("restore-preview").textContent = `Archive refusée : ${error.message}`; $("restore-run").disabled = true; return; }
     }
     renderRestorePreview();
@@ -2479,7 +2491,7 @@ $("restore-run").addEventListener("click", async () => {
     if (!pendingRestore || !requireAdmin() || !supabase) return;
     const plan = restorePlan(), todo = plan.filter((step) => step.action === "create" || step.action === "copy").length;
     if (!window.confirm(`Restaurer ${todo} fiche(s) ? Aucune donnée existante ne sera modifiée ni supprimée.`)) return;
-    const status = $("restore-preview"); $("restore-run").disabled = true;
+    const status = $("restore-result"); $("restore-run").disabled = true;
     try {
         await refreshAdminFirestoreSession();
         const report = await executeRestore({
@@ -2487,16 +2499,29 @@ $("restore-run").addEventListener("click", async () => {
             onProgress: ({ done, total, label }) => { status.textContent = `Restauration ${done + 1}/${total} : ${label}`; },
             upload: async (path, bytes, type) => {
                 const contentType = type || "application/octet-stream";
-                const { error } = await supabase.storage.from("documents").upload(path, new Blob([bytes], { type: contentType }), { contentType, upsert: false });
-                if (error && !/already exists|duplicate/i.test(error.message || "") && String(error.statusCode) !== "409") throw error;
-                return supabase.storage.from("documents").getPublicUrl(path).data.publicUrl;
+                return uploadOrReuseFile({
+                    path, bytes,
+                    upload: async (target, data) => {
+                        const { error } = await supabase.storage.from("documents").upload(target, new Blob([data], { type: contentType }), { contentType, upsert: false });
+                        if (error) throw error;
+                    },
+                    readExisting: async (target) => {
+                        const { data, error } = await supabase.storage.from("documents").download(target);
+                        if (error || !data) throw new Error(`Fichier déjà présent mais impossible à vérifier : ${error?.message || target}`);
+                        return new Uint8Array(await data.arrayBuffer());
+                    },
+                    getUrl: (target) => supabase.storage.from("documents").getPublicUrl(target).data.publicUrl,
+                    alreadyExists: (error) => /already exists|duplicate/i.test(error?.message || "") || String(error?.statusCode) === "409"
+                });
             },
             saveItem: (id, item) => mergeItem(id, item)
         });
-        status.textContent = `Restauration terminée : ${report.restored.length} restaurée(s), ${report.skipped.length} ignorée(s), ${report.failed.length} en échec.` + report.failed.slice(0, 5).map((f) => ` [${f.label} : ${f.reason}]`).join("") + (report.failed.length ? " Relancez en mode Fusion pour reprendre sans doublon." : "");
+        status.textContent = `${report.failed.length ? "Restauration partielle" : "Restauration terminée"} : ${report.restored.length} restaurée(s), ${report.skipped.length} ignorée(s), ${report.failed.length} en échec.` + report.failed.slice(0, 5).map((f) => ` [${f.label} : ${f.reason}]`).join("") + (report.failed.length ? " Relancez en mode Fusion pour reprendre sans doublon." : "");
         logActivity({ action: "backup.restore", resourceType: "backup", result: report.failed.length ? "failure" : "success", count: report.restored.length });
+        if (report.failed.length) { $("restore-mode").value = "merge"; renderRestorePreview(); }
+        else { pendingRestore = null; renderRestorePreview(); }
         refreshStorageUsage();
-    } catch (error) { console.error(error); status.textContent = `Échec de la restauration : ${error.message || "erreur inconnue"}`; }
+    } catch (error) { console.error(error); status.textContent = `Échec de la restauration : ${error.message || "erreur inconnue"}`; renderRestorePreview(); }
 });
 
 // --- Corbeille et cohérence (modules/trash.mjs, modules/reconcile.mjs) ---

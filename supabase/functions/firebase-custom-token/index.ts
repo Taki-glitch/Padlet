@@ -10,16 +10,16 @@ const baseCors = {
   "Access-Control-Allow-Methods": "POST, OPTIONS"
 };
 // --- CORS et MFA (début) : bloc identique dans admin-users et firebase-custom-token (vérifié par tests/phase7.test.mjs) ---
-// ALLOWED_ORIGINS (secret, adresses séparées par des virgules) limite les sites autorisés ; non défini = « * » (comportement d'avant).
+// ALLOWED_ORIGINS (adresses séparées par des virgules) remplace la liste de production par défaut.
 // REQUIRE_MFA_FOR_ADMIN = "true" exige un jeton Supabase de niveau aal2 (mot de passe + code) pour les administrateurs.
 // Chaque entrée est ramenée à son « origine » (https://site.tld) : une barre finale ou un chemin (/Padlet/) saisis par erreur sont tolérés.
 function parseOrigins(raw: string) {
   return raw.split(",").map((entry) => entry.trim()).filter(Boolean).map((entry) => { try { return new URL(entry).origin; } catch { return entry; } });
 }
-const allowedOrigins = parseOrigins(Deno.env.get("ALLOWED_ORIGINS") ?? "");
+const allowedOrigins = parseOrigins(Deno.env.get("ALLOWED_ORIGINS") ?? "https://taki-glitch.github.io");
 const requireMfaForAdmin = Deno.env.get("REQUIRE_MFA_FOR_ADMIN") === "true";
 function corsHeadersFor(origin: string, allowed: string[], base: Record<string, string>) {
-  if (allowed.length === 0) return { ...base, "Access-Control-Allow-Origin": "*" };
+  if (allowed.length === 0) return { ...base, Vary: "Origin" };
   return { ...base, "Access-Control-Allow-Origin": allowed.includes(origin) ? origin : allowed[0], Vary: "Origin" };
 }
 function jwtAal(authorization: string) {

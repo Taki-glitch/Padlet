@@ -27,12 +27,12 @@ Base : le dépôt de travail à la version 0.11.0 (aucune nouvelle archive fourn
 
 ## 4. Ce qui ne peut pas être vérifié depuis le code
 - Règles **réellement publiées** dans Firebase ; politiques Storage réellement actives ; TTL du journal activé → à contrôler dans les consoles.
-- Tests des règles sur l'émulateur : `tests-rules/` + `.github/workflows/rules-emulator.yml` **écrits mais jamais exécutés** ; premier passage dans GitHub Actions (non bloquant).
+- Tests des règles sur l'émulateur : `tests-rules/` existe mais n'a pas été exécuté. Le workflow `.github/workflows/rules-emulator.yml` mentionné dans cet ancien audit est absent de l'arborescence examinée le 2026-11-12 ; voir `AUDIT-COMPLET.md`.
 - Parcours dans un navigateur (Playwright), appareils réels, restauration complète : [bloqué].
 
 ## 5. À faire de ton côté
 1. GitHub → Settings → Code security → activer **Secret scanning** et **Push protection** (gratuit sur un dépôt public) : couvre l'historique Git, que je ne peux pas lire.
-2. Lancer le workflow **Règles Firestore (émulateur)** (Actions → Run workflow) et me donner le résultat ; s'il est vert, retirer `continue-on-error`.
+2. Créer puis lancer un workflow **Règles Firestore (émulateur)** ; il n'est pas actuellement disponible dans Actions.
 3. Paramètres → **Contrôler les fiches** : me dire le résultat (il prépare le durcissement des règles).
 4. Terminer le partage (docs/PARTAGE.md) puis publier `firestore.rules.partage`.
 5. Décider pour le CORS (limiter à l'adresse du site ?).

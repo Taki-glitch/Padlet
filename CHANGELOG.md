@@ -24,7 +24,7 @@ Toutes les fonctions listées ci-dessous sont dans le code et leurs calculs sont
 - **Frise** : regroupement par année civile, légende cliquable (filtre par thème).
 - **Raccourcis clavier** (`/` rechercher, `?` guide, `n` ajouter, `1` `2` `3` vues) et lien « Aller au contenu ».
 - **Application installable** (manifeste et icônes ; pas de mode hors ligne, aucun document privé conservé sur l'appareil).
-- **CI et outils** : Dependabot (actions GitHub), workflows manuels Lighthouse et test de fumée navigateur (écrits, jamais exécutés).
+- **CI et outils prévus** : Dependabot, workflows manuels Lighthouse et test de fumée navigateur. Au 2026-11-12, aucun fichier `.github/workflows/` n'est présent ; ces automatisations ne sont donc pas exécutables depuis ce dépôt.
 - Déjà présents et non refaits : vue liste/grille de la bibliothèque, vue liste de la frise, suppression automatique du journal (à activer), contrôle des secrets.
 
 ### Documentation
@@ -55,7 +55,7 @@ Toutes les fonctions listées ci-dessous sont dans le code et leurs calculs sont
 
 ### Tests
 - `tests/security-static.test.mjs` : pas d'injection HTML ni d'`eval`, `rel=noopener` sur les liens, collections et accès des règles, vérification du jeton dans les fonctions sans contrôle de passerelle, cohérence des filtres, schéma des fiches. 81 tests.
-- `tests-rules/` et `.github/workflows/rules-emulator.yml` : tests des règles sur l'émulateur Firebase, **écrits mais jamais exécutés** ; non bloquants au premier passage.
+- `tests-rules/` : tests des règles sur l'émulateur Firebase, **écrits mais jamais exécutés**. Le workflow `.github/workflows/rules-emulator.yml` mentionné dans l'ancienne documentation est absent du dépôt au 2026-11-12.
 
 ### Documentation
 - `docs/AUDIT-0.12.md` (constats, risques, points non vérifiables), `docs/CSP.md` (étude, non appliquée).

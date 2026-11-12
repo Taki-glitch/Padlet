@@ -501,12 +501,14 @@ test("fonctions serveur : bloc CORS/MFA identique et comportement (liste d'origi
   const extract = (path) => { const src = readFileSync(new URL(`../${path}`, import.meta.url), "utf8"); const a = src.indexOf("// --- CORS et MFA (début)"), b = src.indexOf("// --- CORS et MFA (fin)"); assert.ok(a > 0 && b > a, `${path} : bloc introuvable`); return src.slice(a, b); };
   const admin = extract("supabase/functions/admin-users/index.ts"), custom = extract("supabase/functions/firebase-custom-token/index.ts");
   assert.equal(admin, custom, "le bloc CORS/MFA doit être identique dans les deux fonctions");
-  const body = stripTypeScriptTypes(admin.replace(/Deno\.env\.get\("ALLOWED_ORIGINS"\) \?\? ""/, '""').replace(/Deno\.env\.get\("REQUIRE_MFA_FOR_ADMIN"\) === "true"/, "false"));
-  const mod = await import("data:text/javascript," + encodeURIComponent(`${body}\nexport { corsHeadersFor, jwtAal, mfaMissing, parseOrigins };`));
+  const body = stripTypeScriptTypes(admin.replace(/Deno\.env\.get\("ALLOWED_ORIGINS"\) \?\? "https:\/\/taki-glitch\.github\.io"/, '"https://taki-glitch.github.io"').replace(/Deno\.env\.get\("REQUIRE_MFA_FOR_ADMIN"\) === "true"/, "false"));
+  const mod = await import("data:text/javascript," + encodeURIComponent(`${body}\nexport { allowedOrigins, corsHeadersFor, jwtAal, mfaMissing, parseOrigins };`));
   assert.deepEqual(mod.parseOrigins("https://taki-glitch.github.io/Padlet/, https://x.example/ ,,"), ["https://taki-glitch.github.io", "https://x.example"], "barre finale et chemin tolérés");
   assert.deepEqual(mod.parseOrigins(""), []);
+  assert.deepEqual(mod.allowedOrigins, ["https://taki-glitch.github.io"], "la fonction utilise une liste de production restrictive par défaut");
   const base = { "Access-Control-Allow-Methods": "POST" };
-  assert.equal(mod.corsHeadersFor("https://x", [], base)["Access-Control-Allow-Origin"], "*", "sans liste : comportement d'avant");
+  assert.equal(mod.corsHeadersFor("https://x", [], base)["Access-Control-Allow-Origin"], undefined, "liste vide : aucun accès CORS n'est accordé");
+  assert.equal(mod.corsHeadersFor("https://x", [], base).Vary, "Origin");
   const allowed = ["https://taki-glitch.github.io"];
   assert.equal(mod.corsHeadersFor("https://taki-glitch.github.io", allowed, base)["Access-Control-Allow-Origin"], "https://taki-glitch.github.io");
   assert.equal(mod.corsHeadersFor("https://pirate.example", allowed, base)["Access-Control-Allow-Origin"], "https://taki-glitch.github.io", "origine inconnue : jamais reflétée");

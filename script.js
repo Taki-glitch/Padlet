@@ -19,7 +19,7 @@ import { personalPreferencesStorageKey, readPersonalPreferences, writePersonalPr
 import { createAuthGateway, hasAdminRole, normalizeUsername } from "./modules/auth.mjs";
 import { deleteDocumentAndFile, PartialDocumentDeletionError } from "./modules/data.mjs";
 import { buildMetadataExportPayload } from "./modules/admin.mjs";
-import { buildBackup, parseBackup, planRestore, executeRestore, sha256Hex, uploadOrReuseFile, MAX_BACKUP_ARCHIVE_BYTES } from "./modules/backup.mjs";
+import { buildBackup, parseBackup, planRestore, executeRestore, uploadOrReuseFile, MAX_BACKUP_ARCHIVE_BYTES } from "./modules/backup.mjs";
 import { splitTrash, trashDaysLeft } from "./modules/trash.mjs";
 import { reconcile } from "./modules/reconcile.mjs";
 import { buildActivityEvent, ACTIVITY_RETENTION_DAYS } from "./modules/activity.mjs";
